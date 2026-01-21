@@ -1,0 +1,20 @@
+<launch>
+  <!-- 启 Gazebo 空世界 -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch"/>
+
+  <!-- 用你自己的 xacro 生成 robot_description -->
+  <param name="robot_description"
+        command="$(find xacro)/xacro --inorder $(find my_tb3_description)/urdf_w_sensor/turtlebot3_burger.urdf.xacro"/>
+
+  <!-- Publish TF from robot_description -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" output="screen">
+    <param name="publish_frequency" value="50.0"/>
+  </node>
+
+  <!-- spawn -->
+  <node name="spawn_urdf" pkg="gazebo_ros" type="spawn_model"
+        args="-urdf -param robot_description -model my_tb3 -x 0 -y 0 -z 0.15 -R 0 -P 0 -Y 1.57079632679" />
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_odom" 
+        args="0 0 0 0 0 0 world odom"/>
+</launch>

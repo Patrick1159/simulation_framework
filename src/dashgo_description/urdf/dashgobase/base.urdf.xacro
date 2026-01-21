@@ -1,0 +1,145 @@
+<?xml version="1.0"?>
+
+<robot name="base" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <!-- Define a number of dimensions using properties -->
+  <xacro:property name="base_length" value="0.165" />
+  <xacro:property name="base_radius" value="0.20" />
+  <xacro:property name="wheel_length" value="0.02" />
+  <xacro:property name="wheel_radius" value="0.060" />
+  <xacro:property name="wheel_offset_x" value="0" />
+  <xacro:property name="wheel_offset_y" value="0.17" />
+  <xacro:property name="wheel_offset_z" value="0.060" />
+  
+  <xacro:property name="PI" value="3.1415926" />
+     
+  <!-- define a wheel -->
+  <xacro:macro name="wheel" params="suffix parent reflect color">
+    <joint name="${parent}_${suffix}_wheel_joint" type="continuous">
+      <!-- 轮子绕 y 轴滚动 -->
+      <axis xyz="0 1 0"/>
+      <limit effort="100" velocity="100"/>
+      <origin xyz="${wheel_offset_x} ${reflect*wheel_offset_y} ${wheel_offset_z}" rpy="0 0 0"/>
+      <parent link="${parent}_link"/>
+      <child link="${parent}_${suffix}_wheel_link"/>
+    </joint>
+
+    <link name="${parent}_${suffix}_wheel_link">
+      <visual>
+        <!-- 让 cylinder 横过来（它默认轴在 z），所以绕 y 90° -->
+        <origin xyz="0 0 0" rpy="0 1.57079632679 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_length}"/>
+        </geometry>
+        <material name="${color}" />
+      </visual>
+
+      <collision>
+        <origin xyz="0 0 0" rpy="0 1.57079632679 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_length}"/>
+        </geometry>
+      </collision>
+
+      <inertial>
+        <mass value="0.3"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+      </inertial>
+    </link>
+  </xacro:macro>
+
+  <!-- The base xacro macro -->
+  <xacro:macro name="base" params="name color">
+    <link name="${name}_link">
+      <visual>
+          <origin xyz="0 0 0" rpy="0 0 0"/>
+          <geometry>
+              <cylinder length="${base_length}" radius="${base_radius}"/>
+          </geometry>
+          <material name="iRobot/LightGrey"/>
+      </visual>
+      <inertial>
+        <mass value="5.0"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <inertia ixx="0.10" ixy="0" ixz="0" iyy="0.10" iyz="0" izz="0.10"/>
+      </inertial>
+      <collision>
+          <origin xyz="0 0 0" rpy="0 0 0"/>
+          <geometry>
+              <cylinder length="${base_length}" radius="${base_radius}"/>
+          </geometry>
+      </collision>
+    </link>
+
+    <link name="${name}_footprint">
+
+      <inertial>
+        <mass value="0.0001"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+
+      <!-- 小方块可视化 -->
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <box size="0.05 0.05 0.001" />
+        </geometry>
+        <material name="TransparentGreen" />
+      </visual>
+
+    </link>
+
+    <joint name="${name}_joint" type="fixed">
+      <!--
+      <origin xyz="0 0 0.04" rpy="0 0 0" />     
+      -->  
+      <origin xyz="0 0 ${wheel_radius + base_length/2}" rpy="0 0 0" />
+      <!-- <origin xyz="0 0 ${base_length/2 - wheel_offset_z}" rpy="0 0 0" />       -->
+      <parent link="${name}_footprint"/>
+      <child link="${name}_link" />
+    </joint>
+    
+    
+    <xacro:wheel parent="${name}" suffix="l" reflect="1" color="Orange"/>
+    <xacro:wheel parent="${name}" suffix="r" reflect="-1" color="Orange"/>
+
+    <!-- Add control plugin -->
+    <gazebo>
+      <plugin name="diff_drive" filename="libgazebo_ros_diff_drive.so">
+        <leftJoint>base_l_wheel_joint</leftJoint>
+        <rightJoint>base_r_wheel_joint</rightJoint>
+
+        <wheelSeparation>${2*wheel_offset_y}</wheelSeparation>
+        <wheelDiameter>${2*wheel_radius}</wheelDiameter>
+
+        <robotBaseFrame>base_link</robotBaseFrame>
+        <odometryFrame>odom</odometryFrame>
+
+        <commandTopic>cmd_vel</commandTopic>
+        <odometryTopic>odom</odometryTopic>
+
+        <publishTf>true</publishTf>
+        <publishWheelJointState>true</publishWheelJointState>
+
+        <updateRate>50</updateRate>
+        <torque>5</torque>
+      </plugin>
+    </gazebo>
+
+    <gazebo reference="base_l_wheel_link">
+      <mu1>1.0</mu1><mu2>1.0</mu2>
+    </gazebo>
+    <gazebo reference="base_r_wheel_link">
+      <mu1>1.0</mu1><mu2>1.0</mu2>
+    </gazebo>
+
+    
+  </xacro:macro>
+  
+   <!-- Add the drive wheels -->
+   <!-- <wheel parent="base" suffix="l" reflect="1" color="Orange"/>
+   <wheel parent="base" suffix="r" reflect="-1" color="Orange"/> -->
+
+</robot>

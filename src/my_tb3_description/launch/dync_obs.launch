@@ -1,0 +1,55 @@
+<launch>
+    <!-- Scene selection: 0=Random, 1=Scene1 -->
+    <arg name="scene" default="1" doc="0: Random dynamic obstacles, 1: Scene1 (corridor with moving obstacles)"/>
+
+    <!-- Random dynamic obstacles (scene=0) -->
+    <group if="$(eval arg('scene') == 0)">
+        <arg name="num_obstacles" default="3"/>
+        <arg name="xmin" default="-2.0"/>
+        <arg name="xmax" default="2.0"/>
+        <arg name="ymin" default="0.0"/>
+        <arg name="ymax" default="10.0"/>
+        <arg name="v_min" default="0.1"/>
+        <arg name="v_max" default="0.6"/>
+        <arg name="radius" default="0.3"/>
+        <arg name="height" default="1.0"/>
+
+        <node name="random_dynamic_obstacle" pkg="my_tb3_description" type="random_dynamic_obstacle.py" output="screen">
+            <param name="num_obstacles" value="$(arg num_obstacles)"/>
+            <param name="x_min" value="$(arg xmin)"/>
+            <param name="x_max" value="$(arg xmax)"/>
+            <param name="y_min" value="$(arg ymin)"/>
+            <param name="y_max" value="$(arg ymax)"/>
+            <param name="v_min" value="$(arg v_min)"/>
+            <param name="v_max" value="$(arg v_max)"/>
+            <param name="radius" value="$(arg radius)"/>
+            <param name="height" value="$(arg height)"/>
+            <param name="frame_id" value="world"/>
+        </node>
+    </group>
+
+    <!-- Scene1: Corridor with moving obstacles (scene=1) -->
+    <group if="$(eval arg('scene') == 1)">
+        <arg name="xmin" default="-1.5"/>
+        <arg name="xmax" default="1.5"/>
+        <arg name="ymin" default="0.0"/>
+        <arg name="ymax" default="10.0"/>
+        <arg name="spacing" default="2.0"/>
+        <arg name="speed" default="0.8"/>
+        <arg name="speed_variance" default="0.2"/>
+        <arg name="radius" default="0.3"/>
+        <arg name="height" default="1.8"/>
+
+        <node name="dynamic_obstacle_field" pkg="my_tb3_description" type="dync_scene1.py" output="screen">
+            <param name="xmin" value="$(arg xmin)"/>
+            <param name="xmax" value="$(arg xmax)"/>
+            <param name="ymin" value="$(arg ymin)"/>
+            <param name="ymax" value="$(arg ymax)"/>
+            <param name="spacing" value="$(arg spacing)"/>
+            <param name="speed" value="$(arg speed)"/>
+            <param name="speed_variance" value="$(arg speed_variance)"/>
+            <param name="radius" value="$(arg radius)"/>
+            <param name="height" value="$(arg height)"/>
+        </node>
+    </group>
+</launch>

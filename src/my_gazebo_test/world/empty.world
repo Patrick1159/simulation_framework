@@ -1,0 +1,48 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="default">
+
+    <!-- 1. 物理引擎 -->
+    <physics type="ode">
+      <gravity>0 0 -9.8</gravity>
+    </physics>
+
+    <!-- 2. 光源 -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <!-- 3. 地面 -->
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- 4. 你的 box -->
+    <include>
+      <uri>file:///home/patrick/my_sim/src/my_gazebo_test/model/box</uri>
+      <pose>0 0 100 0 0 0</pose>
+    </include>
+    
+    <actor name="dummy_pedestrian">
+    <pose>0 -3 0 0 0 0</pose>
+
+    <script>
+        <loop>true</loop>
+        <auto_start>true</auto_start>
+
+        <trajectory id="0" type="walking">
+        <waypoint>
+            <time>0.0</time>
+            <pose>0 -3 0 0 0 0</pose>
+        </waypoint>
+
+        <waypoint>
+            <time>8.0</time>
+            <pose>0 3 0 0 0 0</pose>
+        </waypoint>
+        </trajectory>
+    </script>
+    </actor>
+
+  </world>
+</sdf>

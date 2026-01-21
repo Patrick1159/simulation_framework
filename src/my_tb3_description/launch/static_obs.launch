@@ -1,0 +1,24 @@
+<launch>
+  <!-- Static obstacle field parameters -->
+  <arg name="num_obstacles" default="10"/>
+  <arg name="xmin" default="1.0"/>
+  <arg name="xmax" default="12.0"/>
+  <arg name="ymin" default="2.0"/>
+  <arg name="ymax" default="-2.0"/>
+  <arg name="radius" default="0.3"/>
+  <arg name="height" default="1.8"/>
+  <arg name="min_distance" default="1.0"/>
+
+  <!-- Static obstacle field node -->
+  <node name="static_obstacle_field" pkg="my_tb3_description" type="static_scene1.py" output="screen">
+    <param name="num_obstacles" value="$(arg num_obstacles)"/>
+    <param name="xmin" value="$(arg xmin)"/>
+    <param name="xmax" value="$(arg xmax)"/>
+    <param name="ymin" value="$(arg ymin)"/>
+    <param name="ymax" value="$(arg ymax)"/>
+    <param name="radius" value="$(arg radius)"/>
+    <param name="height" value="$(arg height)"/>
+    <param name="min_distance" value="$(arg min_distance)"/>
+    <param name="cleanup_on_start" value="false"/>
+  </node>
+</launch>
