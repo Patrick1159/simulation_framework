@@ -5,6 +5,11 @@
     <rosparam command="load" file="$(find mpc_nav)/config/mpc.yaml" />
   </node>
 
+  <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
+    <param name="target_frame" value="odom"/>
+    <param name="max_age" value="0.5"/>
+  </node>
+  
   <!-- Launch Blank Simulation -->
   <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch" />
 
