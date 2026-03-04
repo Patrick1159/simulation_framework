@@ -1,0 +1,16 @@
+<launch>
+  <arg name="cmd_vel_topic" default="/cmd_vel" />
+  <arg name="use_doa_adapter" default="true" />
+
+  <node pkg="mpc_nav" type="mpc_node.py" name="mpc_node" output="screen">
+    <rosparam command="load" file="$(find mpc_nav)/config/mpc.yaml" />
+    <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)" />
+  </node>
+
+  <group if="$(arg use_doa_adapter)">
+    <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
+      <param name="target_frame" value="odom"/>
+      <param name="max_age" value="0.5"/>
+    </node>
+  </group>
+</launch>
