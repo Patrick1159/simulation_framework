@@ -8,6 +8,7 @@ Panels:
         - /Status1
         - /Image1
         - /TF1/Frames1
+        - /obs_to_MPC1/Status1
       Splitter Ratio: 0.5
     Tree Height: 717
   - Class: rviz/Selection
@@ -119,10 +120,6 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: false
-        base_footprint:
-          Value: false
-        car_odom:
-          Value: true
         d400_aligned_depth_to_color_frame:
           Value: true
         d400_color_frame:
@@ -151,19 +148,18 @@ Visualization Manager:
       Show Names: true
       Tree:
         map:
-          {}
-        odom:
-          t265_pose_frame:
-            t265_link:
-              d400_link:
-                d400_aligned_depth_to_color_frame:
-                  d400_color_optical_frame:
+          odom:
+            t265_pose_frame:
+              t265_link:
+                d400_link:
+                  d400_aligned_depth_to_color_frame:
+                    d400_color_optical_frame:
+                      {}
+                  d400_color_frame:
                     {}
-                d400_color_frame:
-                  {}
-                d400_depth_frame:
-                  d400_depth_optical_frame:
-                    {}
+                  d400_depth_frame:
+                    d400_depth_optical_frame:
+                      {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -181,6 +177,45 @@ Visualization Manager:
       Shape: Arrow
       Topic: /move_base_simple/goal
       Unreliable: false
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /doa_obstacles_markers
+      Name: obs_to_MPC
+      Namespaces:
+        doa_obstacles/position: true
+        doa_obstacles/velocity: true
+      Queue Size: 100
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: RGB8
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.009999999776482582
+      Style: Flat Squares
+      Topic: /RED/pointcloud_process/pointcloud
+      Unreliable: false
+      Use Fixed Frame: true
+      Use rainbow: true
       Value: true
   Enabled: true
   Global Options:

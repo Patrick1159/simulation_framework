@@ -227,6 +227,17 @@ rviz
 
 ---
 
+## Real World Experiment
+```bash
+roslaunch umap experiment.launch
+```
+```bash
+roslaunch umap detailed_match.launch sim:=false
+```
+
+```bash
+roslaunch mpc_nav mpc_real.launch cmd_vel_topic:=/smoother_cmd_vel use_doa_adapter:=true
+```
 ## DOA Vision-Based Perception
 
 The framework includes DOA (Dynamic Obstacle Avoidance), a vision-based perception system that uses depth cameras and RGB images to detect and track dynamic obstacles.
