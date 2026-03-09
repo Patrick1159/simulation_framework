@@ -1,10 +1,15 @@
 <launch>
   <arg name="cmd_vel_topic" default="/cmd_vel" />
   <arg name="use_doa_adapter" default="true" />
+  <arg name="use_rviz" default="true" />
+  <arg name="rviz_config" default="$(find mpc_nav)/launch/rviz/mpc_real.rviz" />
 
   <node pkg="mpc_nav" type="mpc_node.py" name="mpc_node" output="screen">
     <rosparam command="load" file="$(find mpc_nav)/config/mpc.yaml" />
     <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)" />
+    <param name="odom_topic" value="/t265/odom/sample" />
+    <param name="odom_frame" value="/odom" />
+    <param name="base_frame" value="t265_link" />
   </node>
 
   <group if="$(arg use_doa_adapter)">
@@ -12,5 +17,9 @@
       <param name="target_frame" value="odom"/>
       <param name="max_age" value="0.5"/>
     </node>
+  </group>
+
+  <group if="$(arg use_rviz)">
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(arg rviz_config)" output="screen" />
   </group>
 </launch>
