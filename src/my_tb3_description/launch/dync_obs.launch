@@ -1,6 +1,6 @@
 <launch>
     <!-- Scene selection: 0=Random, 1=Scene1 -->
-    <arg name="scene" default="1" doc="0: Random dynamic obstacles, 1: Scene1 (corridor with moving obstacles)"/>
+    <arg name="scene" default="0" doc="0: Random dynamic obstacles, 1: Scene1 (corridor with moving obstacles)"/>
 
     <!-- Random dynamic obstacles (scene=0) -->
     <group if="$(eval arg('scene') == 0)">
@@ -50,6 +50,30 @@
             <param name="speed_variance" value="$(arg speed_variance)"/>
             <param name="radius" value="$(arg radius)"/>
             <param name="height" value="$(arg height)"/>
+        </node>
+    </group>
+
+    <!-- Scene2: Exp1 — Two crossing obstacles (scene=2) -->
+    <!-- Robot at origin; Obs A: (-x_offset, y_start) → right-back;  -->
+    <!-- Obs B: (+x_offset, y_start) → left-back. Paths cross at (0, y_start-x_offset). -->
+    <group if="$(eval arg('scene') == 2)">
+        <arg name="x_offset"      default="2.0"/>
+        <arg name="y_start"       default="4.0"/>
+        <arg name="speed"         default="0.5"/>
+        <arg name="radius"        default="0.3"/>
+        <arg name="height"        default="1.0"/>
+        <arg name="start_delay"   default="3.0"/>
+        <!-- stagger_delay=0 → 脚本自动计算 (sqrt(2)*x_offset/speed + 2 s) -->
+        <arg name="stagger_delay" default="2.5"/>
+
+        <node name="sim_exp_1_crossing" pkg="my_tb3_description" type="sim_exp_1.py" output="screen">
+            <param name="x_offset"      value="$(arg x_offset)"/>
+            <param name="y_start"       value="$(arg y_start)"/>
+            <param name="speed"         value="$(arg speed)"/>
+            <param name="radius"        value="$(arg radius)"/>
+            <param name="height"        value="$(arg height)"/>
+            <param name="start_delay"   value="$(arg start_delay)"/>
+            <param name="stagger_delay" value="$(arg stagger_delay)"/>
         </node>
     </group>
 </launch>

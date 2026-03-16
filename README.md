@@ -47,6 +47,7 @@ my_sim/
   sudo apt install ros-noetic-joint-state-publisher
   sudo apt install ros-noetic-xacro
   sudo apt install ros-noetic-tf
+  sudo apt install ros-noetic-tf2-sensor-msgs
   sudo apt install python3-casadi  # For MPC solver
   ```
 

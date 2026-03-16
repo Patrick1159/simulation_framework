@@ -33,11 +33,40 @@ def wall_sdf(model_name: str, length: float, thickness: float, height: float):
 """
 
 
-def cylinder_sdf(model_name: str, radius: float, height: float, mass: float = 5.0):
-    """Generate dynamic cylinder SDF with inertia."""
+def cylinder_sdf(
+    model_name: str,
+    radius: float,
+    height: float,
+    mass: float = 5.0,
+    material_name: str = None,
+):
+    """Generate dynamic cylinder SDF with inertia.
+
+    Args:
+        model_name: Model name used by Gazebo.
+        radius: Cylinder radius in meters.
+        height: Cylinder height in meters.
+        mass: Cylinder mass in kg.
+        material_name: Optional Gazebo material script name, e.g. "Gazebo/Red".
+    """
     ixx = 0.5 * mass * radius * radius
     iyy = ixx
     izz = (1.0 / 12.0) * mass * (3 * radius * radius + height * height)
+
+    if material_name:
+        material_block = f"""
+        <material>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>{material_name}</name>
+          </script>
+        </material>"""
+    else:
+        material_block = """
+        <material>
+          <ambient>1 0.5 0.1 1</ambient>
+          <diffuse>1 0.5 0.1 1</diffuse>
+        </material>"""
 
     return f"""<?xml version="1.0"?>
 <sdf version="1.6">
@@ -70,10 +99,7 @@ def cylinder_sdf(model_name: str, radius: float, height: float, mass: float = 5.
             <length>{height}</length>
           </cylinder>
         </geometry>
-        <material>
-          <ambient>1 0.5 0.1 1</ambient>
-          <diffuse>1 0.5 0.1 1</diffuse>
-        </material>
+{material_block}
       </visual>
     </link>
   </model>

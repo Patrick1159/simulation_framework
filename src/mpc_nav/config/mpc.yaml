@@ -26,7 +26,7 @@ w_obs: 200.0
 # Topics
 odom_topic: /odom
 goal_topic: /move_base_simple/goal
-obstacles_topic: /doa_obstacles # GT obstacles_topic: /obstacles
+obstacles_topic: /obstacles  # GT obstacles_topic: /obstaclesl; DOA obstacles_topic: /dynamic_obstacles
 cmd_vel_topic: /cmd_vel
 
 # Frames

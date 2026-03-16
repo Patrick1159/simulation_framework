@@ -17,4 +17,6 @@
 
   <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_odom" 
         args="0 0 0 0 0 0 world odom"/>
+
+  <node pkg="my_tb3_description" type="set_pose.py" name="set_pose_node" output="screen"/>
 </launch>
