@@ -14,12 +14,13 @@
 
   <group if="$(arg use_doa_adapter)">
     <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
-      <param name="target_frame" value="odom"/>
-      <param name="max_age" value="0.5"/>
+      <param name="target_frame" value="real_baselink "/>
+      <param name="max_age" value="0.8"/>
     </node>
   </group>
 
   <group if="$(arg use_rviz)">
     <node pkg="rviz" type="rviz" name="rviz" args="-d $(arg rviz_config)" output="screen" />
   </group>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="d400_to_real_baselink" args="-0.18 0 -0.2 0 0 0 d400_link real_baselink" />
 </launch>

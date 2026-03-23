@@ -5,7 +5,7 @@
 import time
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import rospy
 from geometry_msgs.msg import Twist, PoseStamped
@@ -50,6 +50,7 @@ class MPCNode:
 
         self.robot_radius = float(rospy.get_param("~robot_radius", 0.12))
         self.safety_margin = float(rospy.get_param("~safety_margin", 0.15))
+        self.hard_safety_margin = float(rospy.get_param("~hard_safety_margin", 0.05))
         self.obstacle_num = int(rospy.get_param("~obstacle_num", 5))
 
         self.w_goal_pos = float(rospy.get_param("~w_goal_pos", 5.0))
@@ -57,6 +58,12 @@ class MPCNode:
         self.w_u = float(rospy.get_param("~w_u", 0.1))
         self.w_du = float(rospy.get_param("~w_du", 0.5))
         self.w_obs = float(rospy.get_param("~w_obs", 50.0))
+        self.rho_slack = float(rospy.get_param("~rho_slack", 5000.0))
+
+        self.near_dist_activate = float(rospy.get_param("~near_dist_activate", 1.2))
+        self.near_dist_release = float(rospy.get_param("~near_dist_release", 1.6))
+        self.near_ttc_activate = float(rospy.get_param("~near_ttc_activate", 2.5))
+        self.near_ttc_release = float(rospy.get_param("~near_ttc_release", 3.5))
 
         self.odom_topic = rospy.get_param("~odom_topic", "/odom")
         self.goal_topic = rospy.get_param("~goal_topic", "/move_base_simple/goal") # mpc/goal
@@ -70,6 +77,7 @@ class MPCNode:
         self.robot: Optional[RobotState] = None
         self.goal: Optional[RobotState] = None
         self.obstacles: List[Obstacle] = []
+        self.near_obstacle_state: Dict[int, bool] = {}
 
         # Warm-start (previous control sequence)
         self.prev_u: List[Tuple[float, float]] = [(0.0, 0.0)] * self.N
@@ -81,12 +89,14 @@ class MPCNode:
             w_max=self.w_max,
             obstacle_num=self.obstacle_num,
             robot_radius=self.robot_radius,
-            safety_margin=self.safety_margin,
+            soft_margin=self.safety_margin,
+            hard_margin=self.hard_safety_margin,
             w_goal_pos=self.w_goal_pos,
             w_goal_yaw=self.w_goal_yaw,
             w_u=self.w_u,
             w_du=self.w_du,
             w_obs=self.w_obs,
+            rho_slack=self.rho_slack,
         )
         self.u_prev = (0.0, 0.0)
 
@@ -117,16 +127,67 @@ class MPCNode:
 
     def on_obstacles(self, msg: ObstacleArray):
         obs = []
+        active_ids = set()
         for o in msg.obstacles:
+            oid = int(o.id)
             obs.append(Obstacle(
-                oid=int(o.id),
+                oid=oid,
                 x=float(o.position.x),
                 y=float(o.position.y),
                 vx=float(o.velocity.x),
                 vy=float(o.velocity.y),
                 r=float(o.radius),
             ))
+            active_ids.add(oid)
         self.obstacles = obs
+        stale_ids = [oid for oid in self.near_obstacle_state if oid not in active_ids]
+        for oid in stale_ids:
+            self.near_obstacle_state.pop(oid, None)
+
+    def _robot_planar_velocity(self, state: RobotState) -> Tuple[float, float]:
+        v = float(self.u_prev[0])
+        return v * math.cos(state.yaw), v * math.sin(state.yaw)
+
+    def _obstacle_metrics(self, robot: RobotState, obs: Obstacle) -> Tuple[float, float]:
+        rvx, rvy = self._robot_planar_velocity(robot)
+        rel_x = obs.x - robot.x
+        rel_y = obs.y - robot.y
+        rel_vx = obs.vx - rvx
+        rel_vy = obs.vy - rvy
+
+        base_clearance = max(0.0, math.hypot(rel_x, rel_y) - (self.robot_radius + obs.r))
+        min_clearance = base_clearance
+        for k in range(self.N + 1):
+            t = k * self.dt
+            dx = rel_x + t * rel_vx
+            dy = rel_y + t * rel_vy
+            clearance = math.hypot(dx, dy) - (self.robot_radius + obs.r)
+            if clearance < min_clearance:
+                min_clearance = clearance
+
+        rel_v2 = rel_vx * rel_vx + rel_vy * rel_vy
+        if rel_v2 < 1e-6:
+            ttc = float("inf")
+        else:
+            dot = rel_x * rel_vx + rel_y * rel_vy
+            ttc = -dot / rel_v2 if dot < 0.0 else float("inf")
+
+        return min_clearance, ttc
+
+    def _is_near_obstacle(self, robot: RobotState, obs: Obstacle) -> bool:
+        min_clearance, ttc = self._obstacle_metrics(robot, obs)
+        was_near = self.near_obstacle_state.get(obs.oid, False)
+
+        activate = (min_clearance <= self.near_dist_activate) or (ttc <= self.near_ttc_activate)
+        release = (min_clearance >= self.near_dist_release) and (ttc >= self.near_ttc_release)
+
+        if was_near:
+            is_near = not release
+        else:
+            is_near = activate
+
+        self.near_obstacle_state[obs.oid] = is_near
+        return is_near
 
     # -------------------------
     # Core MPC Solver
@@ -148,23 +209,29 @@ class MPCNode:
                 u_init[0, k] = self.prev_u[k][0]
                 u_init[1, k] = self.prev_u[k][1]
 
-        # ---- pack obstacles into fixed-length params (M*5) ----
+        # ---- pack obstacles into fixed-length params (M*6) ----
         M = self.obstacle_num
-        # 取最近 M 个障碍物（按到机器人当前位置距离）
+        obs_with_flags = []
+        for o in obstacles:
+            near_flag = 1.0 if self._is_near_obstacle(x0, o) else 0.0
+            dist2 = (o.x - x0.x) ** 2 + (o.y - x0.y) ** 2
+            obs_with_flags.append((near_flag, dist2, o))
+
+        # 近场障碍物优先，其余按距离排序
         obs_sorted = sorted(
-            obstacles,
-            key=lambda o: (o.x - x0.x) ** 2 + (o.y - x0.y) ** 2
+            obs_with_flags,
+            key=lambda item: (-item[0], item[1])
         )
         obs_sel = obs_sorted[:M]
 
         obs_params = []
         for i in range(M):
             if i < len(obs_sel):
-                o = obs_sel[i]
-                obs_params += [o.x, o.y, o.vx, o.vy, o.r]
+                near_flag, _, o = obs_sel[i]
+                obs_params += [o.x, o.y, o.vx, o.vy, o.r, near_flag]
             else:
                 # padding：放很远、半径0，相当于“无障碍”
-                obs_params += [1e6, 1e6, 0.0, 0.0, 0.0]
+                obs_params += [1e6, 1e6, 0.0, 0.0, 0.0, 0.0]
 
         # -------------------Call solver-------------------
         try:

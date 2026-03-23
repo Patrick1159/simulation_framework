@@ -12,7 +12,7 @@ import tf.transformations as tft
 class DOAAdapter:
     def __init__(self):
         # Parameters
-        self.target_frame = rospy.get_param('~target_frame', 'odom')
+        self.target_frame = rospy.get_param('~target_frame', 'real_baselink') # odom
         self.radius_padding = rospy.get_param('~radius_padding', 0.1)
         self.max_age = rospy.get_param('~max_age', 0.5)
         self.velocity_limit = rospy.get_param('~velocity_limit', 5.0)
@@ -103,6 +103,7 @@ class DOAAdapter:
             
             # Radius: use diagonal of box + padding
             obs.radius = 0.5 * math.sqrt(tracker.box_dimensions.x**2 + tracker.box_dimensions.y**2) + self.radius_padding
+            # obs.radius = min(tracker.box_dimensions.x, tracker.box_dimensions.y) * 0.5 + self.radius_padding
             obs.type = 1  # cylinder
             
             out_msg.obstacles.append(obs)

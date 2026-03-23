@@ -2,7 +2,7 @@ rate_hz: 10.0
 
 # MPC horizon
 dt: 0.1
-N: 30
+N: 45
 
 # Control limits
 v_min: -0.1
@@ -14,14 +14,22 @@ a_w_max: 2.0
 # Robot / safety
 robot_radius: 0.18
 safety_margin: 0.15
+hard_safety_margin: 0.05
 obstacle_num: 5
 
 # Costs (starter values)
 w_goal_pos: 5.0
 w_goal_yaw: 1.0
 w_u: 0.1 # weight on control effort
-w_du: 0.5 # weight on continuity of control
-w_obs: 200.0
+w_du: 50 # weight on continuity of control
+w_obs: 100.0
+rho_slack: 5000.0
+
+# Near-obstacle switching with hysteresis
+near_dist_activate: 0.8
+near_dist_release: 1.2
+near_ttc_activate: 2.0
+near_ttc_release: 3.5
 
 # Topics
 odom_topic: /odom

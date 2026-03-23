@@ -8,18 +8,19 @@ import casadi as ca
 class CasadiMPCSolver:
     def __init__(self, N, dt,
                  v_min, v_max, w_max,
-                 obstacle_num, robot_radius, safety_margin,
-                 w_goal_pos, w_goal_yaw, w_u, w_du, w_obs):
+                 obstacle_num, robot_radius, soft_margin, hard_margin,
+                 w_goal_pos, w_goal_yaw, w_u, w_du, w_obs, rho_slack):
         self.N = N
         self.dt = dt
+        self.M = obstacle_num
 
-        # decision variables: X(3, N+1), U(2, N)
+        # decision variables: X(3, N+1), U(2, N), S(M, N)
         X = ca.SX.sym("X", 3, N + 1)   # [x,y,yaw]
         U = ca.SX.sym("U", 2, N)       # [v,w]
+        S = ca.SX.sym("S", self.M, N)  # slack for near obstacles
 
-        # parameters: x0(3), goal(3), u_prev(2)
-        self.M = obstacle_num
-        P = ca.SX.sym("P", 3 + 3 + 2 + self.M*5)  # [x0,y0,yaw0, gx,gy,gyaw, v_prev,w_prev, obs1(x,y,vx,vy,r), obs2(...), ...]
+        # parameters: x0(3), goal(3), u_prev(2), obs(x,y,vx,vy,r,near_flag)
+        P = ca.SX.sym("P", 3 + 3 + 2 + self.M*6)
 
         x0 = P[0:3]
         g = P[3:6]
@@ -81,14 +82,15 @@ class CasadiMPCSolver:
                 duk = uk - U[:, k - 1]
             J += Wdu * (duk[0] ** 2 + duk[1] ** 2)
 
-            # obstacle avoidance constraints
-            # d_safe2 = (robot_radius + safety_margin)**2  # 先不用obs半径也行；但更好加上
+            # obstacle avoidance: all selected obstacles keep soft penalty,
+            # near obstacles add relaxed hard constraints with slack.
             for i in range(self.M):
-                ox = P[obs_base + i*5 + 0]
-                oy = P[obs_base + i*5 + 1]
-                ovx = P[obs_base + i*5 + 2]
-                ovy = P[obs_base + i*5 + 3]
-                orad = P[obs_base + i*5 + 4]
+                ox = P[obs_base + i*6 + 0]
+                oy = P[obs_base + i*6 + 1]
+                ovx = P[obs_base + i*6 + 2]
+                ovy = P[obs_base + i*6 + 3]
+                orad = P[obs_base + i*6 + 4]
+                near_flag = P[obs_base + i*6 + 5]
 
                 # 常速度预测到k步
                 oxk = ox + (k * dt) * ovx
@@ -98,11 +100,18 @@ class CasadiMPCSolver:
                 dy = X[1, k] - oyk
 
                 ds2 = dx*dx + dy*dy
-                safe2 = (robot_radius + safety_margin + orad)**2
+                soft2 = (robot_radius + soft_margin + orad)**2
+                hard2 = (robot_radius + hard_margin + orad)**2
 
-                # 侵入量：safe^2 - d^2
-                intr = ca.fmax(0, safe2 - ds2)
+                # 软代价：所有选中的障碍物始终保留
+                intr = ca.fmax(0, soft2 - ds2)
                 J += w_obs * (intr * intr)
+
+                # 近场障碍物：加可松弛硬约束 d^2 + s >= r_hard^2, s >= 0
+                g_constr.append(near_flag * (hard2 - ds2 - S[i, k]))
+                lbg += [-float("inf")]
+                ubg += [0.0]
+                J += rho_slack * near_flag * (S[i, k] ** 2)
 
         # terminal cost (stronger goal pull)
         xN = X[:, N]
@@ -128,8 +137,17 @@ class CasadiMPCSolver:
             lbx.append(-w_max)
             ubx.append(w_max)
 
-        # pack decision variables as a vector: [vec(X); vec(U)]
-        opt_vars = ca.vertcat(ca.reshape(X, -1, 1), ca.reshape(U, -1, 1))
+        # S bounds
+        for _ in range(self.M * N):
+            lbx.append(0.0)
+            ubx.append(ca.inf)
+
+        # pack decision variables as a vector: [vec(X); vec(U); vec(S)]
+        opt_vars = ca.vertcat(
+            ca.reshape(X, -1, 1),
+            ca.reshape(U, -1, 1),
+            ca.reshape(S, -1, 1),
+        )
         g_all = ca.vertcat(*g_constr)
 
         nlp = {"x": opt_vars, "f": J, "g": g_all, "p": P}
@@ -153,8 +171,9 @@ class CasadiMPCSolver:
 
         self.nX = 3 * (N + 1)
         self.nU = 2 * N
+        self.nS = self.M * N
 
-    def solve(self, x0, goal, u_prev, obs_params, x_init=None, u_init=None):
+    def solve(self, x0, goal, u_prev, obs_params, x_init=None, u_init=None, s_init=None):
         """
         x0: (3,)
         goal: (3,)  -> [gx,gy,gyaw]
@@ -162,8 +181,8 @@ class CasadiMPCSolver:
         x_init: optional initial guess for X (3,N+1)
         u_init: optional initial guess for U (2,N)
         """
-        if len(obs_params) != self.M * 5:
-            raise ValueError(f"obs_params length must be {self.M*5}, got {len(obs_params)}")
+        if len(obs_params) != self.M * 6:
+            raise ValueError(f"obs_params length must be {self.M*6}, got {len(obs_params)}")
         
         P = ca.DM(list(x0) + list(goal) + list(u_prev) + list(obs_params))
 
@@ -176,8 +195,14 @@ class CasadiMPCSolver:
                 x_init[:, k + 1] = x_init[:, k]
         if u_init is None:
             u_init = ca.DM.zeros(2, self.N)
+        if s_init is None:
+            s_init = ca.DM.zeros(self.M, self.N)
 
-        x0_guess = ca.vertcat(ca.reshape(x_init, -1, 1), ca.reshape(u_init, -1, 1))
+        x0_guess = ca.vertcat(
+            ca.reshape(x_init, -1, 1),
+            ca.reshape(u_init, -1, 1),
+            ca.reshape(s_init, -1, 1),
+        )
 
         t0 = time.time()
         sol = self.solver(
