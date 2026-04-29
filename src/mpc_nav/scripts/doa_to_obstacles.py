@@ -105,7 +105,10 @@ class DOAAdapter:
             obs.radius = 0.5 * math.sqrt(tracker.box_dimensions.x**2 + tracker.box_dimensions.y**2) + self.radius_padding
             # obs.radius = min(tracker.box_dimensions.x, tracker.box_dimensions.y) * 0.5 + self.radius_padding
             obs.type = 1  # cylinder
-            
+            # Forward upstream confidence; default 1.0 if upstream did not populate
+            # the field (e.g. older bag files, back-compat).
+            obs.confidence = getattr(tracker, 'confidence', 1.0) or 1.0
+
             out_msg.obstacles.append(obs)
 
             # Visualization markers (position sphere + velocity arrow)
