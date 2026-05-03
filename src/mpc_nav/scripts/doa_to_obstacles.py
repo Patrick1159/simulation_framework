@@ -34,9 +34,14 @@ class DOAAdapter:
         rospy.loginfo("Subscribing: /rematch/tracker_details -> Publishing: /doa_obstacles (observations)")
     
     def callback(self, msg):
-        # Check frame
+        # After the frame-honest refactor (Phase 7), rematch publishes
+        # tracker_details directly in `odom` (REMATCH_OUTPUT_FRAME = "odom").
+        # The TF lookup branch below is kept as a safety net: if a future
+        # config sets a non-odom output frame, we still transform here so
+        # MPC always receives obstacles in `target_frame`. In the common
+        # case `source_frame == target_frame == "odom"`, no TF call is made.
         if msg.header.frame_id != self.target_frame:
-            rospy.logwarn_throttle(5.0, "Frame mismatch: got %s, expected %s",
+            rospy.logwarn_throttle(5.0, "Frame mismatch: got %s, expected %s — will transform via TF",
                                    msg.header.frame_id, self.target_frame)
         
         out_msg = ObstacleArray()

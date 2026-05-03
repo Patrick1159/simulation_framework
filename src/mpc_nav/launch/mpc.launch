@@ -6,6 +6,7 @@
   <node pkg="mpc_nav" type="mpc_node.py" name="mpc_node" output="screen">
     <rosparam command="load" file="$(find mpc_nav)/config/mpc.yaml" />
     <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)" />
+    <param name="obstacles_topic" value="/doa_obstacles"/>
   </node>
 
   <group if="$(arg use_doa_adapter)">
@@ -19,9 +20,9 @@
   <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch" />
 
   <!-- Launch Dynamic Obstacles Scene -->
-  <!-- <include file="$(find my_tb3_description)/launch/dync_obs.launch">
+  <include file="$(find my_tb3_description)/launch/dync_obs.launch">
     <arg name="scene" value="$(arg dynamic_scene)"/>
-  </include> -->
+  </include>
 
   <!-- Launch Static Obstacles Scene -->
   <!-- <include file="$(find my_tb3_description)/launch/static_obs.launch">
