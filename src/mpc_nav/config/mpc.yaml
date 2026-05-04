@@ -16,6 +16,15 @@ robot_radius: 0.18
 safety_margin: 0.15
 hard_safety_margin: 0.05
 obstacle_num: 5
+# Velocity-scaled lookahead applied to the ellipse semi-major axis inside
+# the MPC objective. A_eff = robot_radius + safety_margin + semi_major
+#                          + tau_lookahead * |v_obstacle|.
+# Bakes the obstacle's swept "danger corridor" over the next ~tau_lookahead
+# seconds into the single-time-step exclusion zone so the planner sees a
+# walking-corridor as forbidden territory and goes around (typically behind)
+# instead of cutting in front. Pure planner-side; does not touch
+# Obstacle.msg geometry or visualization.
+tau_lookahead: 1.0
 
 # Costs (starter values)
 w_goal_pos: 5.0

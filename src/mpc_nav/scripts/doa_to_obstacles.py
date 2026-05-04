@@ -106,17 +106,41 @@ class DOAAdapter:
             else:
                 obs.velocity = vel
             
-            # Radius: use diagonal of box + padding
-            obs.radius = 0.5 * math.sqrt(tracker.box_dimensions.x**2 + tracker.box_dimensions.y**2) + self.radius_padding
-            # obs.radius = min(tracker.box_dimensions.x, tracker.box_dimensions.y) * 0.5 + self.radius_padding
-            obs.type = 1  # cylinder
+            # Obstacle footprint:
+            #   - radius:     legacy circular fallback (diagonal-of-bbox / 2)
+            #   - semi_major: aligned with velocity direction (geometric only;
+            #                 the MPC planner adds velocity-scaled lookahead
+            #                 inflation itself, so vis stays geometric)
+            #   - semi_minor: perpendicular to velocity
+            # When the obstacle is moving, max(box.x, box.y) goes along the
+            # motion direction and min(...) perpendicular — a reasonable
+            # approximation for pedestrians / robots whose long axis tends
+            # to align with the direction of travel. When v ≈ 0 the ellipse
+            # degenerates to a circle (a = b) so the orientation noise has
+            # no effect.
+            box_x = float(tracker.box_dimensions.x)
+            box_y = float(tracker.box_dimensions.y)
+            obs.radius = 0.5 * math.sqrt(box_x * box_x + box_y * box_y) + self.radius_padding
+            v_norm_xy = math.sqrt(obs.velocity.x ** 2 + obs.velocity.y ** 2)
+            half_long  = 0.5 * max(box_x, box_y) + self.radius_padding
+            half_short = 0.5 * min(box_x, box_y) + self.radius_padding
+            if v_norm_xy < 0.05:
+                obs.semi_major = half_long  # degenerate to circle (a = b chosen as the larger half)
+                obs.semi_minor = half_long
+            else:
+                obs.semi_major = half_long   # along velocity
+                obs.semi_minor = half_short  # perpendicular
+            obs.type = 1  # cylinder (legacy)
             # Forward upstream confidence; default 1.0 if upstream did not populate
             # the field (e.g. older bag files, back-compat).
             obs.confidence = getattr(tracker, 'confidence', 1.0) or 1.0
 
             out_msg.obstacles.append(obs)
 
-            # Visualization markers (position sphere + velocity arrow)
+            # Visualization markers (position ellipse + velocity arrow).
+            # We render the geometric ellipse (semi_major, semi_minor) so RViz
+            # is "what you see is what the MPC sees, geometrically" — without
+            # the planner's velocity-scaled lookahead inflation.
             sphere = Marker()
             sphere.header = out_msg.header
             sphere.ns = f"{marker_ns}/position"
@@ -124,11 +148,17 @@ class DOAAdapter:
             sphere.type = Marker.SPHERE
             sphere.action = Marker.ADD
             sphere.pose.position = obs.position
-            sphere.pose.orientation.w = 1.0
-            radius = max(obs.radius, 0.05)
-            sphere.scale.x = radius * 2.0 * self.marker_scale
-            sphere.scale.y = radius * 2.0 * self.marker_scale
-            sphere.scale.z = radius * 2.0 * self.marker_scale
+            # Orient along the velocity vector (yaw only; pitch/roll = 0).
+            yaw_obs = math.atan2(obs.velocity.y, obs.velocity.x) if v_norm_xy > 1e-3 else 0.0
+            qz = math.sin(yaw_obs * 0.5)
+            qw = math.cos(yaw_obs * 0.5)
+            sphere.pose.orientation.z = qz
+            sphere.pose.orientation.w = qw
+            a = max(obs.semi_major, 0.05)
+            b = max(obs.semi_minor, 0.05)
+            sphere.scale.x = a * 2.0 * self.marker_scale
+            sphere.scale.y = b * 2.0 * self.marker_scale
+            sphere.scale.z = a * 2.0 * self.marker_scale  # arbitrary: just for visibility
             sphere.color.r = 0.2
             sphere.color.g = 0.8
             sphere.color.b = 1.0

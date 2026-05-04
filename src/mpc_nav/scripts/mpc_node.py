@@ -30,7 +30,9 @@ class Obstacle:
     y: float
     vx: float
     vy: float
-    r: float
+    r: float           # legacy circular fallback / used for near hysteresis
+    a: float           # ellipse semi-major (along velocity)
+    b: float           # ellipse semi-minor (perpendicular to velocity)
 
 
 class MPCNode:
@@ -52,6 +54,14 @@ class MPCNode:
         self.safety_margin = float(rospy.get_param("~safety_margin", 0.15))
         self.hard_safety_margin = float(rospy.get_param("~hard_safety_margin", 0.05))
         self.obstacle_num = int(rospy.get_param("~obstacle_num", 5))
+        # Velocity-scaled lookahead applied to the ellipse semi-major axis
+        # inside the MPC objective. Inflates the obstacle's "danger corridor"
+        # along its motion direction so the planner sees a continuous swept
+        # region rather than a sequence of disjoint instantaneous circles.
+        # tau_lookahead seconds × |v| meters/sec is added to A_eff at each
+        # prediction step. Pure planner-side; does not affect Obstacle.msg
+        # geometry or visualization.
+        self.tau_lookahead = float(rospy.get_param("~tau_lookahead", 1.0))
 
         self.w_goal_pos = float(rospy.get_param("~w_goal_pos", 5.0))
         self.w_goal_yaw = float(rospy.get_param("~w_goal_yaw", 1.0))
@@ -91,6 +101,7 @@ class MPCNode:
             robot_radius=self.robot_radius,
             soft_margin=self.safety_margin,
             hard_margin=self.hard_safety_margin,
+            tau_lookahead=self.tau_lookahead,
             w_goal_pos=self.w_goal_pos,
             w_goal_yaw=self.w_goal_yaw,
             w_u=self.w_u,
@@ -130,13 +141,24 @@ class MPCNode:
         active_ids = set()
         for o in msg.obstacles:
             oid = int(o.id)
+            r = float(o.radius)
+            # Ellipse fields (geometric only — no lookahead); fall back to
+            # circular `radius` when the publisher (e.g. legacy GT scene
+            # scripts) does not populate them.
+            sm = float(getattr(o, "semi_major", 0.0) or 0.0)
+            sn = float(getattr(o, "semi_minor", 0.0) or 0.0)
+            if sm <= 0.0 or sn <= 0.0:
+                sm = r
+                sn = r
             obs.append(Obstacle(
                 oid=oid,
                 x=float(o.position.x),
                 y=float(o.position.y),
                 vx=float(o.velocity.x),
                 vy=float(o.velocity.y),
-                r=float(o.radius),
+                r=r,
+                a=sm,
+                b=sn,
             ))
             active_ids.add(oid)
         self.obstacles = obs
@@ -155,13 +177,16 @@ class MPCNode:
         rel_vx = obs.vx - rvx
         rel_vy = obs.vy - rvy
 
-        base_clearance = max(0.0, math.hypot(rel_x, rel_y) - (self.robot_radius + obs.r))
+        # near-hysteresis uses a circular outer bound (max half-axis) — keeps
+        # the activate/release logic simple and conservative.
+        outer_r = max(obs.a, obs.b)
+        base_clearance = max(0.0, math.hypot(rel_x, rel_y) - (self.robot_radius + outer_r))
         min_clearance = base_clearance
         for k in range(self.N + 1):
             t = k * self.dt
             dx = rel_x + t * rel_vx
             dy = rel_y + t * rel_vy
-            clearance = math.hypot(dx, dy) - (self.robot_radius + obs.r)
+            clearance = math.hypot(dx, dy) - (self.robot_radius + outer_r)
             if clearance < min_clearance:
                 min_clearance = clearance
 
@@ -209,7 +234,10 @@ class MPCNode:
                 u_init[0, k] = self.prev_u[k][0]
                 u_init[1, k] = self.prev_u[k][1]
 
-        # ---- pack obstacles into fixed-length params (M*6) ----
+        # ---- pack obstacles into fixed-length params (M*8) ----
+        # 8 floats per slot: [ox, oy, ovx, ovy, semi_major, semi_minor, near_flag, _reserved]
+        # _reserved keeps the slot size even and leaves room for future fields
+        # without an ABI break (e.g. obstacle confidence, predicted-traj idx).
         M = self.obstacle_num
         obs_with_flags = []
         for o in obstacles:
@@ -228,10 +256,11 @@ class MPCNode:
         for i in range(M):
             if i < len(obs_sel):
                 near_flag, _, o = obs_sel[i]
-                obs_params += [o.x, o.y, o.vx, o.vy, o.r, near_flag]
+                obs_params += [o.x, o.y, o.vx, o.vy, o.a, o.b, near_flag, 0.0]
             else:
-                # padding：放很远、半径0，相当于“无障碍”
-                obs_params += [1e6, 1e6, 0.0, 0.0, 0.0, 0.0]
+                # Empty slot: park far away with zero ellipse + zero velocity
+                # so its constraint is always inactive.
+                obs_params += [1e6, 1e6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
         # -------------------Call solver-------------------
         try:

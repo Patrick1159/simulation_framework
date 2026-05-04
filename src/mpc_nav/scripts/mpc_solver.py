@@ -9,18 +9,23 @@ class CasadiMPCSolver:
     def __init__(self, N, dt,
                  v_min, v_max, w_max,
                  obstacle_num, robot_radius, soft_margin, hard_margin,
+                 tau_lookahead,
                  w_goal_pos, w_goal_yaw, w_u, w_du, w_obs, rho_slack):
         self.N = N
         self.dt = dt
         self.M = obstacle_num
+        # number of float slots per obstacle in the parameter vector;
+        # see mpc_node._solve_mpc obs_params packing.
+        self._n_per_obs = 8
 
         # decision variables: X(3, N+1), U(2, N), S(M, N)
         X = ca.SX.sym("X", 3, N + 1)   # [x,y,yaw]
         U = ca.SX.sym("U", 2, N)       # [v,w]
         S = ca.SX.sym("S", self.M, N)  # slack for near obstacles
 
-        # parameters: x0(3), goal(3), u_prev(2), obs(x,y,vx,vy,r,near_flag)
-        P = ca.SX.sym("P", 3 + 3 + 2 + self.M*6)
+        # parameters: x0(3), goal(3), u_prev(2), per-obstacle 8 floats:
+        #   [ox, oy, ovx, ovy, semi_major, semi_minor, near_flag, _reserved]
+        P = ca.SX.sym("P", 3 + 3 + 2 + self.M * self._n_per_obs)
 
         x0 = P[0:3]
         g = P[3:6]
@@ -82,33 +87,69 @@ class CasadiMPCSolver:
                 duk = uk - U[:, k - 1]
             J += Wdu * (duk[0] ** 2 + duk[1] ** 2)
 
-            # obstacle avoidance: all selected obstacles keep soft penalty,
-            # near obstacles add relaxed hard constraints with slack.
+            # obstacle avoidance: elliptical footprint oriented along the
+            # obstacle's velocity vector, with a velocity-scaled lookahead
+            # added to the major axis. The lookahead bakes the obstacle's
+            # "swept corridor" over the next ~tau_lookahead seconds into the
+            # *single-time-step* exclusion zone, so the planner sees a true
+            # walking-corridor as forbidden territory rather than a series
+            # of disjoint instantaneous circles. This is what biases the
+            # planner toward going behind a moving pedestrian instead of
+            # cutting in front.
             for i in range(self.M):
-                ox = P[obs_base + i*6 + 0]
-                oy = P[obs_base + i*6 + 1]
-                ovx = P[obs_base + i*6 + 2]
-                ovy = P[obs_base + i*6 + 3]
-                orad = P[obs_base + i*6 + 4]
-                near_flag = P[obs_base + i*6 + 5]
+                base = obs_base + i * self._n_per_obs
+                ox = P[base + 0]
+                oy = P[base + 1]
+                ovx = P[base + 2]
+                ovy = P[base + 3]
+                semi_major = P[base + 4]
+                semi_minor = P[base + 5]
+                near_flag = P[base + 6]
+                # P[base + 7] reserved
 
                 # 常速度预测到k步
                 oxk = ox + (k * dt) * ovx
                 oyk = oy + (k * dt) * ovy
 
-                dx = X[0, k] - oxk
-                dy = X[1, k] - oyk
+                # Relative position robot -> obstacle (k-th step).
+                rx = X[0, k] - oxk
+                ry = X[1, k] - oyk
 
-                ds2 = dx*dx + dy*dy
-                soft2 = (robot_radius + soft_margin + orad)**2
-                hard2 = (robot_radius + hard_margin + orad)**2
+                # Orient the ellipse along the velocity vector. eps_v guards
+                # the divisions when |v| ≈ 0; in that case (cos_t, sin_t) is
+                # noise but a ≈ b (the publisher sends a degenerate circle
+                # when stationary), so the rotation has no observable effect.
+                v_norm = ca.sqrt(ovx * ovx + ovy * ovy + 1e-9)
+                cos_t = ovx / v_norm
+                sin_t = ovy / v_norm
+
+                # Rotate (rx, ry) into the obstacle's local frame (x' along
+                # velocity, y' perpendicular).
+                rx_local =  rx * cos_t + ry * sin_t
+                ry_local = -rx * sin_t + ry * cos_t
+
+                # Effective semi-axes used by the planner:
+                #   - A_eff: geometric semi-major + collision margins +
+                #            velocity-scaled lookahead (motion-aware
+                #            inflation along the direction of travel).
+                #   - B_eff: geometric semi-minor + collision margins
+                #            (no lookahead — perpendicular dimension stays
+                #            geometric).
+                A_eff_soft = robot_radius + soft_margin + semi_major + tau_lookahead * v_norm
+                B_eff_soft = robot_radius + soft_margin + semi_minor
+                A_eff_hard = robot_radius + hard_margin + semi_major + tau_lookahead * v_norm
+                B_eff_hard = robot_radius + hard_margin + semi_minor
+
+                # Implicit ellipse value: <1 inside, =1 on boundary, >1 outside.
+                e_soft = (rx_local / A_eff_soft) ** 2 + (ry_local / B_eff_soft) ** 2
+                e_hard = (rx_local / A_eff_hard) ** 2 + (ry_local / B_eff_hard) ** 2
 
                 # 软代价：所有选中的障碍物始终保留
-                intr = ca.fmax(0, soft2 - ds2)
+                intr = ca.fmax(0, 1 - e_soft)
                 J += w_obs * (intr * intr)
 
-                # 近场障碍物：加可松弛硬约束 d^2 + s >= r_hard^2, s >= 0
-                g_constr.append(near_flag * (hard2 - ds2 - S[i, k]))
+                # 近场障碍物：加可松弛硬约束 e_hard + s >= 1, s >= 0
+                g_constr.append(near_flag * (1 - e_hard - S[i, k]))
                 lbg += [-float("inf")]
                 ubg += [0.0]
                 J += rho_slack * near_flag * (S[i, k] ** 2)
@@ -181,8 +222,9 @@ class CasadiMPCSolver:
         x_init: optional initial guess for X (3,N+1)
         u_init: optional initial guess for U (2,N)
         """
-        if len(obs_params) != self.M * 6:
-            raise ValueError(f"obs_params length must be {self.M*6}, got {len(obs_params)}")
+        if len(obs_params) != self.M * self._n_per_obs:
+            raise ValueError(
+                f"obs_params length must be {self.M * self._n_per_obs}, got {len(obs_params)}")
         
         P = ca.DM(list(x0) + list(goal) + list(u_prev) + list(obs_params))
 
