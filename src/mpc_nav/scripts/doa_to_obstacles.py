@@ -135,6 +135,23 @@ class DOAAdapter:
             # the field (e.g. older bag files, back-compat).
             obs.confidence = getattr(tracker, 'confidence', 1.0) or 1.0
 
+            # Forward KF covariance diagonal (planar components only — z is
+            # not used by the 2D MPC). When upstream is a legacy publisher
+            # without these fields, getattr defaults to 0.0 and the MPC
+            # treats the obstacle as having no uncertainty (no inflation).
+            #
+            # NOTE: TF transform of covariance for a yaw-only `odom <- d435`
+            # rotation would mix sigma_xx and sigma_yy. We deliberately skip
+            # that transformation here because (a) after Phase 7
+            # frame-honest refactor source frame is already odom in the
+            # common path, so transform is identity, and (b) when the
+            # safety-net TF branch fires we still want to forward something
+            # rather than silently zeroing out uncertainty.
+            obs.sigma2_xx   = float(getattr(tracker, 'sigma2_xx',   0.0) or 0.0)
+            obs.sigma2_yy   = float(getattr(tracker, 'sigma2_yy',   0.0) or 0.0)
+            obs.sigma2_vxvx = float(getattr(tracker, 'sigma2_vxvx', 0.0) or 0.0)
+            obs.sigma2_vyvy = float(getattr(tracker, 'sigma2_vyvy', 0.0) or 0.0)
+
             out_msg.obstacles.append(obs)
 
             # Visualization markers (position ellipse + velocity arrow).

@@ -16,15 +16,22 @@ robot_radius: 0.18
 safety_margin: 0.15
 hard_safety_margin: 0.05
 obstacle_num: 5
-# Velocity-scaled lookahead applied to the ellipse semi-major axis inside
-# the MPC objective. A_eff = robot_radius + safety_margin + semi_major
-#                          + tau_lookahead * |v_obstacle|.
-# Bakes the obstacle's swept "danger corridor" over the next ~tau_lookahead
-# seconds into the single-time-step exclusion zone so the planner sees a
-# walking-corridor as forbidden territory and goes around (typically behind)
-# instead of cutting in front. Pure planner-side; does not touch
-# Obstacle.msg geometry or visualization.
+# Forward swept capsule (replaces previous symmetrically-inflated ellipse).
+# At each prediction step k the obstacle is modelled as a line segment
+# from p_obs(t_k) to p_obs(t_k) + tau_lookahead*v_obs, inflated by
+# max(semi_major, semi_minor) plus collision margins. KF covariance from
+# the upstream tracker (sigma2_*) further inflates the capsule:
+#   capsule radius += uncertainty_alpha * sigma_perp(k)
+#   capsule length += uncertainty_alpha * sigma_par(k)
+# All planner-side; Obstacle.msg geometry and visualization stay geometric.
 tau_lookahead: 1.0
+# Below this speed the obstacle is treated as static (capsule degenerates
+# to a point — pure circular footprint, no swept corridor).
+dynamic_v_min: 0.1
+# Multiplicative factor on KF 1-sigma covariance when inflating the capsule.
+# 0.0 disables uncertainty inflation (recovers a pure geometric capsule).
+# 1.0 inflates by 1-sigma; 2.0 by 2-sigma.
+uncertainty_alpha: 1.0
 
 # Costs (starter values)
 w_goal_pos: 5.0

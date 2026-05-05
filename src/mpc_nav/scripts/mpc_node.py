@@ -33,6 +33,11 @@ class Obstacle:
     r: float           # legacy circular fallback / used for near hysteresis
     a: float           # ellipse semi-major (along velocity)
     b: float           # ellipse semi-minor (perpendicular to velocity)
+    # KF covariance diagonal at current step (post-update). 0 = no info.
+    s2_xx: float = 0.0
+    s2_yy: float = 0.0
+    s2_vxvx: float = 0.0
+    s2_vyvy: float = 0.0
 
 
 class MPCNode:
@@ -54,14 +59,26 @@ class MPCNode:
         self.safety_margin = float(rospy.get_param("~safety_margin", 0.15))
         self.hard_safety_margin = float(rospy.get_param("~hard_safety_margin", 0.05))
         self.obstacle_num = int(rospy.get_param("~obstacle_num", 5))
-        # Velocity-scaled lookahead applied to the ellipse semi-major axis
-        # inside the MPC objective. Inflates the obstacle's "danger corridor"
-        # along its motion direction so the planner sees a continuous swept
-        # region rather than a sequence of disjoint instantaneous circles.
-        # tau_lookahead seconds × |v| meters/sec is added to A_eff at each
-        # prediction step. Pure planner-side; does not affect Obstacle.msg
-        # geometry or visualization.
+        # Velocity-scaled lookahead applied along the obstacle's motion
+        # direction inside the MPC objective. Models the swept "danger
+        # corridor" the obstacle will trace over the next ~tau_lookahead
+        # seconds as a forward swept capsule (line segment from p_obs to
+        # p_obs + tau*v_obs, inflated by max(a,b) plus margins). This is
+        # what biases the planner toward going behind a moving pedestrian
+        # rather than cutting in front. Pure planner-side; does not touch
+        # Obstacle.msg geometry or visualization.
         self.tau_lookahead = float(rospy.get_param("~tau_lookahead", 1.0))
+        # Below this speed the obstacle is treated as static (no swept
+        # corridor — capsule degenerates to a point with the geometric
+        # ellipse footprint).
+        self.dynamic_v_min = float(rospy.get_param("~dynamic_v_min", 0.1))
+        # Capsule radius / length uncertainty inflation, expressed as
+        # multiples of the KF position+velocity sigma at each step:
+        #   capsule_radius += alpha * sigma_perp(k)
+        #   capsule_endpoint += alpha * sigma_par(k) * v_hat
+        # Set to 0.0 to disable uncertainty inflation (recovers a pure
+        # geometric capsule).
+        self.uncertainty_alpha = float(rospy.get_param("~uncertainty_alpha", 1.0))
 
         self.w_goal_pos = float(rospy.get_param("~w_goal_pos", 5.0))
         self.w_goal_yaw = float(rospy.get_param("~w_goal_yaw", 1.0))
@@ -102,6 +119,8 @@ class MPCNode:
             soft_margin=self.safety_margin,
             hard_margin=self.hard_safety_margin,
             tau_lookahead=self.tau_lookahead,
+            dynamic_v_min=self.dynamic_v_min,
+            uncertainty_alpha=self.uncertainty_alpha,
             w_goal_pos=self.w_goal_pos,
             w_goal_yaw=self.w_goal_yaw,
             w_u=self.w_u,
@@ -159,6 +178,10 @@ class MPCNode:
                 r=r,
                 a=sm,
                 b=sn,
+                s2_xx=float(getattr(o, "sigma2_xx", 0.0) or 0.0),
+                s2_yy=float(getattr(o, "sigma2_yy", 0.0) or 0.0),
+                s2_vxvx=float(getattr(o, "sigma2_vxvx", 0.0) or 0.0),
+                s2_vyvy=float(getattr(o, "sigma2_vyvy", 0.0) or 0.0),
             ))
             active_ids.add(oid)
         self.obstacles = obs
@@ -234,10 +257,12 @@ class MPCNode:
                 u_init[0, k] = self.prev_u[k][0]
                 u_init[1, k] = self.prev_u[k][1]
 
-        # ---- pack obstacles into fixed-length params (M*8) ----
-        # 8 floats per slot: [ox, oy, ovx, ovy, semi_major, semi_minor, near_flag, _reserved]
-        # _reserved keeps the slot size even and leaves room for future fields
-        # without an ABI break (e.g. obstacle confidence, predicted-traj idx).
+        # ---- pack obstacles into fixed-length params (M*11) ----
+        # 11 floats per slot:
+        #   [ox, oy, ovx, ovy, semi_major, semi_minor, near_flag,
+        #    sigma2_xx, sigma2_yy, sigma2_vxvx, sigma2_vyvy]
+        # The four sigma2_* values may be 0 when upstream has no probabilistic
+        # tracker; the solver treats that as "no uncertainty inflation".
         M = self.obstacle_num
         obs_with_flags = []
         for o in obstacles:
@@ -256,11 +281,16 @@ class MPCNode:
         for i in range(M):
             if i < len(obs_sel):
                 near_flag, _, o = obs_sel[i]
-                obs_params += [o.x, o.y, o.vx, o.vy, o.a, o.b, near_flag, 0.0]
+                obs_params += [
+                    o.x, o.y, o.vx, o.vy,
+                    o.a, o.b, near_flag,
+                    o.s2_xx, o.s2_yy, o.s2_vxvx, o.s2_vyvy,
+                ]
             else:
                 # Empty slot: park far away with zero ellipse + zero velocity
                 # so its constraint is always inactive.
-                obs_params += [1e6, 1e6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+                obs_params += [1e6, 1e6, 0.0, 0.0, 0.0, 0.0, 0.0,
+                               0.0, 0.0, 0.0, 0.0]
 
         # -------------------Call solver-------------------
         try:
