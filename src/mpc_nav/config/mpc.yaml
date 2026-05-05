@@ -33,6 +33,10 @@ dynamic_v_min: 0.1
 # 1.0 inflates by 1-sigma; 2.0 by 2-sigma.
 uncertainty_alpha: 1.0
 
+# Visualize the exact swept capsules packed into MPC obs_params.
+swept_capsule_vis_enable: true
+swept_capsule_vis_stride: 8
+
 # Costs (starter values)
 w_goal_pos: 5.0
 w_goal_yaw: 1.0

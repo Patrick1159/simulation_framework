@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import rospy
-from geometry_msgs.msg import Twist, PoseStamped
+from geometry_msgs.msg import Twist, PoseStamped, Point
 from nav_msgs.msg import Odometry, Path
-from visualization_msgs.msg import MarkerArray
+from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import ColorRGBA
 import tf.transformations as tft
 
 from mpc_nav.msg import ObstacleArray, MPCStatus
@@ -80,6 +81,15 @@ class MPCNode:
         # geometric capsule).
         self.uncertainty_alpha = float(rospy.get_param("~uncertainty_alpha", 1.0))
 
+        # Swept-capsule visualization. Draws the same exclusion zones the
+        # solver actually uses: at each sampled prediction step k we emit
+        # a stadium-shaped outline (2 side lines + 2 semicircle arcs) in
+        # the obstacle's swept position at t_k. Sampling every `stride`
+        # steps keeps the picture readable (N=45 -> ~6 outlines per obstacle).
+        self.swept_capsule_vis_enable = bool(rospy.get_param("~swept_capsule_vis_enable", True))
+        self.swept_capsule_vis_stride = max(1, int(rospy.get_param("~swept_capsule_vis_stride", 8)))
+        self.swept_capsule_arc_points = max(4, int(rospy.get_param("~swept_capsule_arc_points", 10)))
+
         self.w_goal_pos = float(rospy.get_param("~w_goal_pos", 5.0))
         self.w_goal_yaw = float(rospy.get_param("~w_goal_yaw", 1.0))
         self.w_u = float(rospy.get_param("~w_u", 0.1))
@@ -134,6 +144,7 @@ class MPCNode:
         self.cmd_pub = rospy.Publisher(self.cmd_vel_topic, Twist, queue_size=1)
         self.path_pub = rospy.Publisher("/mpc/pred_path", Path, queue_size=1)
         self.status_pub = rospy.Publisher("/mpc/status", MPCStatus, queue_size=1)
+        self.swept_capsule_pub = rospy.Publisher("/mpc/swept_capsules", MarkerArray, queue_size=1)
 
         # Subscribers
         rospy.Subscriber(self.odom_topic, Odometry, self.on_odom, queue_size=1)
@@ -292,6 +303,11 @@ class MPCNode:
                 obs_params += [1e6, 1e6, 0.0, 0.0, 0.0, 0.0, 0.0,
                                0.0, 0.0, 0.0, 0.0]
 
+        try:
+            self.publish_swept_capsules(obs_params)
+        except Exception as e:
+            rospy.logwarn_throttle(1.0, "Swept capsule visualization failed: %s", str(e))
+
         # -------------------Call solver-------------------
         try:
             ok, solve_ms, cost, X_opt, U_opt = self.casadi_solver.solve(
@@ -366,6 +382,159 @@ class MPCNode:
         st.cost = cost
         st.status_text = text
         self.status_pub.publish(st)
+
+    def _swept_capsule_steps(self) -> List[int]:
+        last_solver_step = max(0, self.N - 1)
+        steps = list(range(0, self.N, self.swept_capsule_vis_stride))
+        if not steps or steps[-1] != last_solver_step:
+            steps.append(last_solver_step)
+        return steps
+
+    @staticmethod
+    def _mk_point(x: float, y: float, z: float = 0.04) -> Point:
+        p = Point()
+        p.x = x
+        p.y = y
+        p.z = z
+        return p
+
+    def _capsule_outline_points(
+        self,
+        start_x: float,
+        start_y: float,
+        end_x: float,
+        end_y: float,
+        radius: float,
+    ) -> List[Point]:
+        dx = end_x - start_x
+        dy = end_y - start_y
+        seg_len = math.hypot(dx, dy)
+
+        if seg_len < 1e-6:
+            count = max(12, 2 * self.swept_capsule_arc_points)
+            return [
+                self._mk_point(
+                    start_x + radius * math.cos(2.0 * math.pi * j / count),
+                    start_y + radius * math.sin(2.0 * math.pi * j / count),
+                )
+                for j in range(count + 1)
+            ]
+
+        ux = dx / seg_len
+        uy = dy / seg_len
+        px = -uy
+        py = ux
+        theta = math.atan2(uy, ux)
+        points = [
+            self._mk_point(start_x + px * radius, start_y + py * radius),
+            self._mk_point(end_x + px * radius, end_y + py * radius),
+        ]
+
+        for j in range(1, self.swept_capsule_arc_points + 1):
+            ang = theta + math.pi / 2.0 - j * math.pi / self.swept_capsule_arc_points
+            points.append(self._mk_point(end_x + radius * math.cos(ang),
+                                         end_y + radius * math.sin(ang)))
+
+        points.append(self._mk_point(start_x - px * radius, start_y - py * radius))
+
+        for j in range(1, self.swept_capsule_arc_points + 1):
+            ang = theta - math.pi / 2.0 - j * math.pi / self.swept_capsule_arc_points
+            points.append(self._mk_point(start_x + radius * math.cos(ang),
+                                         start_y + radius * math.sin(ang)))
+
+        points.append(points[0])
+        return points
+
+    def _swept_capsule_color(self, k: int) -> ColorRGBA:
+        phase = float(k) / float(max(1, self.N - 1))
+        color = ColorRGBA()
+        color.r = 0.1 + 0.9 * phase
+        color.g = 0.95 - 0.55 * phase
+        color.b = 1.0 - 0.75 * phase
+        color.a = max(0.16, 0.78 - 0.58 * phase)
+        return color
+
+    def _swept_capsule_geometry(
+        self,
+        params: List[float],
+        k: int,
+    ) -> Optional[Tuple[float, float, float, float, float]]:
+        ox, oy, ovx, ovy, semi_major, semi_minor, _, s2_xx, s2_yy, s2_vxvx, s2_vyvy = params
+        if abs(ox) > 1e5 or abs(oy) > 1e5:
+            return None
+
+        oxk = ox + (k * self.dt) * ovx
+        oyk = oy + (k * self.dt) * ovy
+        v_norm = math.sqrt(ovx * ovx + ovy * ovy + 1e-9)
+        e_par_x = ovx / v_norm
+        e_par_y = ovy / v_norm
+        e_perp_x = -e_par_y
+        e_perp_y = e_par_x
+        gate = 0.5 * (1.0 + math.tanh(20.0 * (v_norm - self.dynamic_v_min)))
+
+        t_k = k * self.dt
+        sigma_pos_par2 = e_par_x * e_par_x * s2_xx + e_par_y * e_par_y * s2_yy
+        sigma_pos_perp2 = e_perp_x * e_perp_x * s2_xx + e_perp_y * e_perp_y * s2_yy
+        sigma_vel_par2 = e_par_x * e_par_x * s2_vxvx + e_par_y * e_par_y * s2_vyvy
+        sigma_vel_perp2 = e_perp_x * e_perp_x * s2_vxvx + e_perp_y * e_perp_y * s2_vyvy
+        sigma_par_k = math.sqrt(max(0.0, sigma_pos_par2 + t_k * t_k * sigma_vel_par2) + 1e-12)
+        sigma_perp_k = math.sqrt(max(0.0, sigma_pos_perp2 + t_k * t_k * sigma_vel_perp2) + 1e-12)
+
+        seg_len = (self.tau_lookahead * v_norm + self.uncertainty_alpha * sigma_par_k) * gate
+        end_x = oxk + seg_len * e_par_x
+        end_y = oyk + seg_len * e_par_y
+        radius = (
+            self.robot_radius
+            + self.safety_margin
+            + max(semi_major, semi_minor)
+            + self.uncertainty_alpha * sigma_perp_k
+        )
+        if radius <= 0.0:
+            return None
+        return oxk, oyk, end_x, end_y, radius
+
+    def publish_swept_capsules(self, obs_params: List[float]):
+        marker_array = MarkerArray()
+        stamp = rospy.Time.now()
+
+        clear = Marker()
+        clear.header.stamp = stamp
+        clear.header.frame_id = self.odom_frame
+        clear.action = Marker.DELETEALL
+        marker_array.markers.append(clear)
+
+        if not self.swept_capsule_vis_enable:
+            self.swept_capsule_pub.publish(marker_array)
+            return
+
+        n_per_obs = 11
+        marker_id = 0
+        lifetime = rospy.Duration(max(0.2, 2.0 / max(1.0, self.rate_hz)))
+        for obs_idx in range(min(self.obstacle_num, len(obs_params) // n_per_obs)):
+            base = obs_idx * n_per_obs
+            params = obs_params[base:base + n_per_obs]
+            for k in self._swept_capsule_steps():
+                geometry = self._swept_capsule_geometry(params, k)
+                if geometry is None:
+                    continue
+                start_x, start_y, end_x, end_y, radius = geometry
+
+                marker = Marker()
+                marker.header.stamp = stamp
+                marker.header.frame_id = self.odom_frame
+                marker.ns = "mpc_swept_capsules"
+                marker.id = marker_id
+                marker.type = Marker.LINE_STRIP
+                marker.action = Marker.ADD
+                marker.pose.orientation.w = 1.0
+                marker.scale.x = 0.025
+                marker.color = self._swept_capsule_color(k)
+                marker.lifetime = lifetime
+                marker.points = self._capsule_outline_points(start_x, start_y, end_x, end_y, radius)
+                marker_array.markers.append(marker)
+                marker_id += 1
+
+        self.swept_capsule_pub.publish(marker_array)
 
     def spin(self):
         rate = rospy.Rate(self.rate_hz)
