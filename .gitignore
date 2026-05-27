@@ -5,3 +5,4 @@
 __pycache__/
 *.egg-info
 *.swp
+.catkin_tools/

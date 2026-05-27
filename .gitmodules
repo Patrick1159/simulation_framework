@@ -1,6 +1,3 @@
 [submodule "src/DOA"]
 	path = src/DOA
 	url = https://github.com/Patrick1159/DOA.git
-[submodule "src/voxblox"]
-	path = src/voxblox
-	url = https://github.com/ethz-asl/voxblox.git

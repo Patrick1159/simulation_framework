@@ -1,0 +1,57 @@
+<launch>
+  <!--
+    LMPCC Obstacle Avoidance Experiment
+    ====================================
+    Starts: adapter + C++ MPC planner + Gazebo/TB3 + dynamic obstacles + RViz
+
+    DOA perception MUST be launched separately (needs fastsam conda env):
+      conda activate fastsam
+      source devel/setup.zsh
+      roslaunch umap simulation.launch
+
+    NOTE: Both this launch and simulation.launch start RViz by default.
+    Use use_rviz:=false here to avoid duplicate RViz windows.
+  -->
+
+  <arg name="dynamic_scene" default="1" />
+  <arg name="cmd_vel_topic" default="/cmd_vel" />
+  <arg name="use_rviz" default="true" />
+
+  <!-- 1. DOA -> MPC Adapter -->
+  <!-- Converts /rematch/tracker_details (TrackerDetailArray) to
+       /doa_obstacles_tmpc (mpc_planner_msgs/ObstacleArray) with
+       constant-velocity predictions + KF uncertainty propagation -->
+  <node pkg="mpc_nav" type="doa_to_tmpc.py" name="doa_to_tmpc" output="screen">
+    <param name="target_frame" value="odom"/>
+    <param name="N" value="30"/>
+    <param name="dt" value="0.2"/>
+    <param name="max_age" value="0.2"/>
+    <param name="watchdog_timeout" value="0.01"/>
+  </node>
+
+  <!-- 2. MPC Planner (LMPCC: GoalModule + EllipsoidConstraint) -->
+  <!-- Note: /input/state_pose is subscribed but intentionally not remapped
+       for Gazebo use — state comes from /input/state (/odom) instead -->
+  <node pkg="mpc_planner_jackalsimulator" type="jackalsimulator_planner"
+        name="mpc_planner" output="screen" required="true">
+    <remap from="/input/state" to="/odom"/>
+    <remap from="/input/goal" to="/move_base_simple/goal"/>
+    <remap from="/input/obstacles" to="/doa_obstacles_tmpc"/>
+    <remap from="/output/command" to="$(arg cmd_vel_topic)"/>
+  </node>
+
+  <!-- 3. Gazebo Simulation + TurtleBot3 -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch" />
+
+  <!-- 4. Dynamic Obstacles Scene (0=random, 1=corridor) -->
+  <include file="$(find my_tb3_description)/launch/dync_obs.launch">
+    <arg name="scene" value="$(arg dynamic_scene)"/>
+  </include>
+
+  <!-- 5. RViz -->
+  <node pkg="rviz" type="rviz" name="rviz" if="$(arg use_rviz)"
+        args="-d $(find mpc_nav)/launch/rviz/mpc.rviz" />
+
+    <!-- 6. Static TF: map -> odom -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="map_to_odom" args="0 0 0 0 0 0 map odom" />
+</launch>

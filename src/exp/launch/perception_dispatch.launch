@@ -1,0 +1,245 @@
+<?xml version="1.0"?>
+<!--
+  perception_dispatch.launch
+  ==========================
+  Selects perception/tracking stack for a given experiment method and
+  publishes /doa_obstacles (mpc_nav/ObstacleArray) for the MPC node.
+
+  Does NOT include simulation_dync.launch directly (that file starts
+  mpc_node + adapter and would collide with our top-level launch). The
+  perception block is inlined here for the `ours_*` variants.
+
+  Arg `method` selects exactly one of:
+    ours_full | ours_no_clip | ours_no_sam | stage1_only | dodt | fapp | oracle_gt
+
+  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+  ┃ KNOWN-BROKEN METHODS (see group comments below for details):          ┃
+  ┃   stage1_only — coarse tracker publishes umap/Obstacles,              ┃
+  ┃                doa_to_obstacles.py expects umap/TrackerDetailArray    ┃
+  ┃                                                                       ┃
+  ┃   dodt       — onboard_detector publishes MarkerArray,                ┃
+  ┃                doa_to_obstacles.py expects TrackerDetailArray         ┃
+  ┃                                                                       ┃
+  ┃   fapp       — mot_mapping publishes ObjectsStates,                   ┃
+  ┃                doa_to_obstacles.py expects TrackerDetailArray         ┃
+  ┃                                                                       ┃
+  ┃ All three produce rx-errors on the adapter topic and MPC receives     ┃
+  ┃ zero obstacles. Dedicated bridge nodes are needed for each method.    ┃
+  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+-->
+<launch>
+  <arg name="method"/>
+  <arg name="dynamic_scene" default="2"/>
+
+  <arg name="rgb_topic" default="/d435/image_raw"/>
+  <arg name="aligned_depth_topic" default="/d435/depth/image_raw"/>
+
+  <!-- =====================================================================
+       ours_full: full DOA perception (umap + coarse + sam + clip + aggregate
+       + pointcloud) + doa_to_obstacles adapter
+       ===================================================================== -->
+  <group if="$(eval arg('method') == 'ours_full')">
+    <rosparam command="load" file="$(find umap)/config/simulation.yaml"/>
+
+    <node pkg="umap" type="umap_extract" name="umap_node" output="screen">
+      <remap from="/camera/aligned_depth_to_color/image_raw" to="$(arg aligned_depth_topic)"/>
+      <remap from="/camera/color/image_raw" to="$(arg rgb_topic)"/>
+    </node>
+    <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
+    <node pkg="umap" type="para_samnode.py" name="para_sam_node" output="screen">
+      <param name="image_topic" value="$(arg rgb_topic)"/>
+    </node>
+    <node pkg="umap" type="para_clipnode.py" name="para_clip_node" output="screen">
+      <param name="image_topic" value="$(arg rgb_topic)"/>
+    </node>
+    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen"/>
+
+    <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose" output="screen">
+      <param name="parent_frame_id" value="odom"/>
+      <param name="child_frame_id" value="d435_color_optical_frame"/>
+    </node>
+    <node name="camera_node" pkg="pointcloud_generator" type="processor" output="screen">
+      <rosparam file="$(find pointcloud_generator)/param/sim_param.yaml" command="load"/>
+      <param name="/camera/pointcloud_frame_id" value="odom"/>
+      <param name="/pointcloud_generate/dynamic_only" value="true"/>
+      <param name="/pointcloud_generate/camera/view_field" value="4.0"/>
+      <param name="/pointcloud_generate/camera/self_filter" value="0.0025"/>
+      <param name="/pointcloud_generate/camera/grid_size" value="0.05"/>
+      <param name="/pointcloud_generate/camera/eud_range" value="0.01"/>
+      <param name="/pointcloud_generate/camera/eud_min_points_num" value="1"/>
+      <remap from="/RED/pointcloud_process/camera_pose" to="/camera/current_pose"/>
+      <remap from="/RED/pointcloud_process/odom" to="/uav0/mavros/local_position/odom"/>
+      <remap from="/RED/pointcloud_process/color_image" to="$(arg rgb_topic)"/>
+      <remap from="/RED/pointcloud_process/depth_image" to="$(arg aligned_depth_topic)"/>
+      <remap from="/model_output/obstacles" to="/model_output/obstacles"/>
+    </node>
+
+    <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
+      <param name="input_topic" value="/rematch/tracker_details"/>
+    </node>
+  </group>
+
+  <!-- =====================================================================
+       ours_no_clip: ours_full without para_clip_node; CLIP contribution
+       suppressed via SIMILARITY_THRESHOLD=-1 / SIMILARITY_WEIGHT=0 (exposed
+       via <env> so upstream nodes can pick them up without source edits).
+       See comment inside the group for caveat about missing dummy publisher.
+       ===================================================================== -->
+  <group if="$(eval arg('method') == 'ours_no_clip')">
+    <env name="SIMILARITY_THRESHOLD" value="-1"/>
+    <env name="SIMILARITY_WEIGHT" value="0"/>
+
+    <rosparam command="load" file="$(find umap)/config/simulation.yaml"/>
+
+    <node pkg="umap" type="umap_extract" name="umap_node" output="screen">
+      <remap from="/camera/aligned_depth_to_color/image_raw" to="$(arg aligned_depth_topic)"/>
+      <remap from="/camera/color/image_raw" to="$(arg rgb_topic)"/>
+    </node>
+    <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
+    <node pkg="umap" type="para_samnode.py" name="para_sam_node" output="screen">
+      <param name="image_topic" value="$(arg rgb_topic)"/>
+    </node>
+    <!-- CLIP replaced by dummy features -->
+    <!-- ours_no_clip: CLIP node omitted. Rematch will receive empty similarity features
+         (no dummy publisher available in this codebase). If rematch requires a
+         features topic to be present, this method will need a small dummy publisher
+         added in a follow-up patch. -->
+    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen"/>
+
+    <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose" output="screen">
+      <param name="parent_frame_id" value="odom"/>
+      <param name="child_frame_id" value="d435_color_optical_frame"/>
+    </node>
+    <node name="camera_node" pkg="pointcloud_generator" type="processor" output="screen">
+      <rosparam file="$(find pointcloud_generator)/param/sim_param.yaml" command="load"/>
+      <param name="/camera/pointcloud_frame_id" value="odom"/>
+      <param name="/pointcloud_generate/dynamic_only" value="true"/>
+      <param name="/pointcloud_generate/camera/view_field" value="4.0"/>
+      <param name="/pointcloud_generate/camera/self_filter" value="0.0025"/>
+      <param name="/pointcloud_generate/camera/grid_size" value="0.05"/>
+      <param name="/pointcloud_generate/camera/eud_range" value="0.01"/>
+      <param name="/pointcloud_generate/camera/eud_min_points_num" value="1"/>
+      <remap from="/RED/pointcloud_process/camera_pose" to="/camera/current_pose"/>
+      <remap from="/RED/pointcloud_process/odom" to="/uav0/mavros/local_position/odom"/>
+      <remap from="/RED/pointcloud_process/color_image" to="$(arg rgb_topic)"/>
+      <remap from="/RED/pointcloud_process/depth_image" to="$(arg aligned_depth_topic)"/>
+      <remap from="/model_output/obstacles" to="/model_output/obstacles"/>
+    </node>
+
+    <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
+      <param name="input_topic" value="/rematch/tracker_details"/>
+    </node>
+  </group>
+
+  <!-- =====================================================================
+       ours_no_sam: ours_full minus para_sam_node
+       ===================================================================== -->
+  <group if="$(eval arg('method') == 'ours_no_sam')">
+    <rosparam command="load" file="$(find umap)/config/simulation.yaml"/>
+
+    <node pkg="umap" type="umap_extract" name="umap_node" output="screen">
+      <remap from="/camera/aligned_depth_to_color/image_raw" to="$(arg aligned_depth_topic)"/>
+      <remap from="/camera/color/image_raw" to="$(arg rgb_topic)"/>
+    </node>
+    <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
+    <!-- SAM disabled -->
+    <node pkg="umap" type="para_clipnode.py" name="para_clip_node" output="screen">
+      <param name="image_topic" value="$(arg rgb_topic)"/>
+    </node>
+    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen"/>
+
+    <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose" output="screen">
+      <param name="parent_frame_id" value="odom"/>
+      <param name="child_frame_id" value="d435_color_optical_frame"/>
+    </node>
+    <node name="camera_node" pkg="pointcloud_generator" type="processor" output="screen">
+      <rosparam file="$(find pointcloud_generator)/param/sim_param.yaml" command="load"/>
+      <param name="/camera/pointcloud_frame_id" value="odom"/>
+      <param name="/pointcloud_generate/dynamic_only" value="true"/>
+      <param name="/pointcloud_generate/camera/view_field" value="4.0"/>
+      <param name="/pointcloud_generate/camera/self_filter" value="0.0025"/>
+      <param name="/pointcloud_generate/camera/grid_size" value="0.05"/>
+      <param name="/pointcloud_generate/camera/eud_range" value="0.01"/>
+      <param name="/pointcloud_generate/camera/eud_min_points_num" value="1"/>
+      <remap from="/RED/pointcloud_process/camera_pose" to="/camera/current_pose"/>
+      <remap from="/RED/pointcloud_process/odom" to="/uav0/mavros/local_position/odom"/>
+      <remap from="/RED/pointcloud_process/color_image" to="$(arg rgb_topic)"/>
+      <remap from="/RED/pointcloud_process/depth_image" to="$(arg aligned_depth_topic)"/>
+      <remap from="/model_output/obstacles" to="/model_output/obstacles"/>
+    </node>
+
+    <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
+      <param name="input_topic" value="/rematch/tracker_details"/>
+    </node>
+  </group>
+
+  <!-- =====================================================================
+       stage1_only: umap_extract + coarse_match (no rematch).
+       NOT CURRENTLY SUPPORTED END-TO-END.
+       The coarse tracker publishes `umap/Obstacles` (a different message
+       type than `umap/TrackerDetailArray`), so doa_to_obstacles.py refuses
+       the connection with a "datatype/md5sum mismatch" error and
+       /doa_obstacles stays empty. MPC then runs blind and the robot may
+       reach the goal only because random spawns missed its path.
+       To support this method, write a dedicated bridge node under
+       exp/scripts/ that converts umap/Obstacles -> mpc_nav/ObstacleArray
+       (estimating velocity from obstacles_history_pos), and replace the
+       adapter line below with that node. Until then this group is left
+       intact for forward-compat; expect zero MPC obstacle input.
+       ===================================================================== -->
+  <group if="$(eval arg('method') == 'stage1_only')">
+    <rosparam command="load" file="$(find umap)/config/simulation.yaml"/>
+
+    <node pkg="umap" type="umap_extract" name="umap_node" output="screen">
+      <remap from="/camera/aligned_depth_to_color/image_raw" to="$(arg aligned_depth_topic)"/>
+      <remap from="/camera/color/image_raw" to="$(arg rgb_topic)"/>
+    </node>
+    <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
+
+    <!-- WARNING: this adapter will drop the connection (type mismatch). -->
+    <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
+      <param name="input_topic" value="/tracker/dynamic_obstacles"/>
+    </node>
+  </group>
+
+  <!-- =====================================================================
+       dodt: onboard_detector baseline.
+       NOTE: onboard_detector publishes visualization_msgs/MarkerArray on
+       /onboard_detector/dynamic_bboxes; doa_to_obstacles.py expects
+       umap/TrackerDetailArray. The remap below redirects subscription, but
+       a separate bridge node is required for end-to-end functionality.
+       TODO confirm DODT output topic + add message-type bridge.
+       ===================================================================== -->
+  <group if="$(eval arg('method') == 'dodt')">
+    <include file="$(find onboard_detector)/launch/run_detector.launch"/>
+    <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
+      <param name="input_topic" value="/onboard_detector/dynamic_bboxes"/>
+    </node>
+  </group>
+
+  <!-- =====================================================================
+       fapp: FAPP depth-only mapping + DBSCAN clustering baseline.
+       Publishes obj_state_msgs/ObjectsStates on /states (message-type
+       mismatch with adapter; same caveat as `dodt`).
+       ===================================================================== -->
+  <group if="$(eval arg('method') == 'fapp')">
+    <include file="$(find mot_mapping)/launch/sim_mapping.launch"/>
+    <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
+      <param name="input_topic" value="/states"/>
+    </node>
+  </group>
+
+  <!-- =====================================================================
+       oracle_gt: ground-truth obstacles from Gazebo on /obstacles.
+       The GT publisher (sim_exp_1.py / crossing_pedestrian.py / ...) already
+       publishes mpc_nav/ObstacleArray, i.e. the exact type MPC expects.
+       Do NOT use doa_to_obstacles.py here — that adapter subscribes to
+       umap/TrackerDetailArray and would refuse the connection with a
+       "topic types do not match" warning.
+       Just relay /obstacles -> /doa_obstacles with topic_tools/relay.
+       ===================================================================== -->
+  <group if="$(eval arg('method') == 'oracle_gt')">
+    <node pkg="topic_tools" type="relay" name="oracle_gt_relay"
+          args="/obstacles /doa_obstacles" output="screen"/>
+  </group>
+</launch>
