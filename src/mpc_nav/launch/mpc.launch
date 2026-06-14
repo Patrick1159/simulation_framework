@@ -2,10 +2,17 @@
   <arg name="dynamic_scene" default="1" />
   <arg name="cmd_vel_topic" default="/cmd_vel" />
   <arg name="use_doa_adapter" default="true" />
+  <!-- plan_only=true: MPC keeps planning and publishing /mpc/pred_path,
+       but its velocity commands are sent to a dead topic so the robot
+       stays still. Useful for cleanly observing planned trajectories
+       against a fully-deterministic scene (e.g. dynamic_scene=3) without
+       motion + perception feedback contaminating the plan. -->
+  <arg name="plan_only" default="false" />
 
   <node pkg="mpc_nav" type="mpc_node.py" name="mpc_node" output="screen">
     <rosparam command="load" file="$(find mpc_nav)/config/mpc.yaml" />
-    <param name="cmd_vel_topic" value="$(arg cmd_vel_topic)" />
+    <param name="cmd_vel_topic"
+           value="$(eval '/mpc/cmd_vel_blocked' if arg('plan_only') else arg('cmd_vel_topic'))" />
     <param name="obstacles_topic" value="/doa_obstacles"/>
   </node>
 

@@ -106,15 +106,21 @@ class MPCNode:
         self.goal_topic = rospy.get_param("~goal_topic", "/move_base_simple/goal") # mpc/goal
         self.obstacles_topic = rospy.get_param("~obstacles_topic", "/obstacles")
         self.cmd_vel_topic = rospy.get_param("~cmd_vel_topic", "/cmd_vel")
+        self.nav_path_topic = rospy.get_param("~nav_path_topic", "/mpc/nav_path")
 
         self.odom_frame = rospy.get_param("~odom_frame", "odom")
         self.base_frame = rospy.get_param("~base_frame", "base_footprint")
+        self.nav_path_min_dist = max(0.0, float(rospy.get_param("~nav_path_min_dist", 0.02)))
+        self.nav_path_min_dt = max(0.0, float(rospy.get_param("~nav_path_min_dt", 0.2)))
 
         # State buffers
         self.robot: Optional[RobotState] = None
         self.goal: Optional[RobotState] = None
         self.obstacles: List[Obstacle] = []
         self.near_obstacle_state: Dict[int, bool] = {}
+        self.nav_path = Path()
+        self.nav_path.header.frame_id = self.odom_frame
+        self._last_nav_path_sample: Optional[Tuple[float, float, float]] = None
 
         # Warm-start (previous control sequence)
         self.prev_u: List[Tuple[float, float]] = [(0.0, 0.0)] * self.N
@@ -143,6 +149,7 @@ class MPCNode:
         # Publishers
         self.cmd_pub = rospy.Publisher(self.cmd_vel_topic, Twist, queue_size=1)
         self.path_pub = rospy.Publisher("/mpc/pred_path", Path, queue_size=1)
+        self.nav_path_pub = rospy.Publisher(self.nav_path_topic, Path, queue_size=1, latch=True)
         self.status_pub = rospy.Publisher("/mpc/status", MPCStatus, queue_size=1)
         self.swept_capsule_pub = rospy.Publisher("/mpc/swept_capsules", MarkerArray, queue_size=1)
 
@@ -158,12 +165,16 @@ class MPCNode:
         q = msg.pose.pose.orientation
         yaw = tft.euler_from_quaternion([q.x, q.y, q.z, q.w])[2]
         self.robot = RobotState(p.x, p.y, yaw)
+        self._append_nav_path_from_odom(msg)
 
     def on_goal(self, msg: PoseStamped):
         p = msg.pose.position
         q = msg.pose.orientation
         yaw = tft.euler_from_quaternion([q.x, q.y, q.z, q.w])[2]
-        self.goal = RobotState(p.x, p.y, yaw)
+        new_goal = RobotState(p.x, p.y, yaw)
+        if self._goal_changed(new_goal):
+            self._reset_nav_path()
+        self.goal = new_goal
         rospy.loginfo("New goal received: x=%.2f y=%.2f yaw=%.2f", p.x, p.y, yaw)
 
     def on_obstacles(self, msg: ObstacleArray):
@@ -349,6 +360,48 @@ class MPCNode:
     # -------------------------
     # Publishing helpers
     # -------------------------
+    def _goal_changed(self, new_goal: RobotState) -> bool:
+        if self.goal is None:
+            return True
+        dpos = math.hypot(new_goal.x - self.goal.x, new_goal.y - self.goal.y)
+        dyaw = abs(self.wrap_angle(new_goal.yaw - self.goal.yaw))
+        return dpos > 0.05 or dyaw > 0.05
+
+    def _reset_nav_path(self):
+        self.nav_path = Path()
+        self.nav_path.header.frame_id = self.odom_frame
+        self.nav_path.header.stamp = rospy.Time.now()
+        self._last_nav_path_sample = None
+        self.nav_path_pub.publish(self.nav_path)
+
+    def _append_nav_path_from_odom(self, msg: Odometry):
+        if self.goal is None:
+            return
+
+        stamp = msg.header.stamp if msg.header.stamp.to_sec() > 0.0 else rospy.Time.now()
+        frame_id = msg.header.frame_id or self.odom_frame
+        x = float(msg.pose.pose.position.x)
+        y = float(msg.pose.pose.position.y)
+        ts = stamp.to_sec()
+
+        if self._last_nav_path_sample is not None:
+            last_x, last_y, last_t = self._last_nav_path_sample
+            moved = math.hypot(x - last_x, y - last_y)
+            elapsed = ts - last_t
+            if moved < self.nav_path_min_dist and elapsed < self.nav_path_min_dt:
+                return
+
+        self.nav_path.header.stamp = stamp
+        self.nav_path.header.frame_id = frame_id
+
+        ps = PoseStamped()
+        ps.header.stamp = stamp
+        ps.header.frame_id = frame_id
+        ps.pose = msg.pose.pose
+        self.nav_path.poses.append(ps)
+        self._last_nav_path_sample = (x, y, ts)
+        self.nav_path_pub.publish(self.nav_path)
+
     def publish_cmd(self, v: float, w: float):
         msg = Twist()
         msg.linear.x = v

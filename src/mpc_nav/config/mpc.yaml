@@ -5,15 +5,15 @@ dt: 0.1
 N: 45
 
 # Control limits
-v_min: -0.1
-v_max: 0.4
-w_max: 1.2
+v_min: 0.0
+v_max: 0.6
+w_max: 1.0
 a_v_max: 0.5       # optional accel limit
-a_w_max: 2.0
+a_w_max: 1.0
 
 # Robot / safety
 robot_radius: 0.18
-safety_margin: 0.15
+safety_margin: 0.00
 hard_safety_margin: 0.05
 obstacle_num: 5
 # Forward swept capsule (replaces previous symmetrically-inflated ellipse).
@@ -24,25 +24,25 @@ obstacle_num: 5
 #   capsule radius += uncertainty_alpha * sigma_perp(k)
 #   capsule length += uncertainty_alpha * sigma_par(k)
 # All planner-side; Obstacle.msg geometry and visualization stay geometric.
-tau_lookahead: 1.0
+tau_lookahead: 0.25
 # Below this speed the obstacle is treated as static (capsule degenerates
 # to a point — pure circular footprint, no swept corridor).
-dynamic_v_min: 0.1
+dynamic_v_min: 0.15
 # Multiplicative factor on KF 1-sigma covariance when inflating the capsule.
 # 0.0 disables uncertainty inflation (recovers a pure geometric capsule).
 # 1.0 inflates by 1-sigma; 2.0 by 2-sigma.
-uncertainty_alpha: 1.0
+uncertainty_alpha: 0.0
 
 # Visualize the exact swept capsules packed into MPC obs_params.
 swept_capsule_vis_enable: true
 swept_capsule_vis_stride: 8
 
 # Costs (starter values)
-w_goal_pos: 5.0
+w_goal_pos: 50.0
 w_goal_yaw: 1.0
-w_u: 0.1 # weight on control effort
+w_u: 0.5 # weight on control effort
 w_du: 50 # weight on continuity of control
-w_obs: 100.0
+w_obs: 80.0
 rho_slack: 5000.0
 
 # Near-obstacle switching with hysteresis

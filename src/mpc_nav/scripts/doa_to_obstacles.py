@@ -22,16 +22,19 @@ class DOAAdapter:
         self.marker_lifetime = rospy.get_param('~marker_lifetime', 0.2)
         
         # Publisher and Subscriber
-        self.pub = rospy.Publisher('/doa_obstacles', ObstacleArray, queue_size=1)
-        self.marker_pub = rospy.Publisher('/doa_obstacles_markers', MarkerArray, queue_size=1)
-        self.sub = rospy.Subscriber('/rematch/tracker_details', TrackerDetailArray, self.callback, queue_size=1)
+        self.output_topic = rospy.get_param('~output_topic', '/doa_obstacles')
+        self.marker_topic = rospy.get_param('~marker_topic', '/doa_obstacles_markers')
+        self.input_topic = rospy.get_param('~input_topic', '/rematch/tracker_details')
+        self.pub = rospy.Publisher(self.output_topic, ObstacleArray, queue_size=1)
+        self.marker_pub = rospy.Publisher(self.marker_topic, MarkerArray, queue_size=1)
+        self.sub = rospy.Subscriber(self.input_topic, TrackerDetailArray, self.callback, queue_size=1)
 
         # TF buffer/listener
         self.tf_buffer = tf2_ros.Buffer(cache_time=rospy.Duration(10.0))
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         
         rospy.loginfo("DOA to MPC adapter started. Target frame: %s", self.target_frame)
-        rospy.loginfo("Subscribing: /rematch/tracker_details -> Publishing: /doa_obstacles (observations)")
+        rospy.loginfo("Subscribing: %s -> Publishing: %s", self.input_topic, self.output_topic)
     
     def callback(self, msg):
         # After the frame-honest refactor (Phase 7), rematch publishes

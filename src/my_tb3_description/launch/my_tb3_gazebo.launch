@@ -4,7 +4,7 @@
 
   <!-- 用你自己的 xacro 生成 robot_description -->
   <param name="robot_description"
-        command="$(find xacro)/xacro --inorder $(find my_tb3_description)/urdf_w_sensor/turtlebot3_burger.urdf.xacro"/>
+        command="$(find xacro)/xacro $(find my_tb3_description)/urdf_w_sensor/turtlebot3_burger.urdf.xacro"/>
 
   <!-- Publish TF from robot_description -->
   <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" output="screen">

@@ -78,7 +78,7 @@ Focus on T-MPC; mpc_nav kept as comparison baseline.
 
 | Scene | Script | Obstacles | Motion | Used by dync_obs scene# |
 |-------|--------|-----------|--------|------------------------|
-| Random walk | `random_dynamic_obstacle.py` | N cylinders | Random velocity/angular rate | 0 |
+| Random walk | `random_dynamic_obstacle.py` | N cylinders | Random velocity/angular rate (**seed fixed** via `~random_seed`, default 42) | 0 |
 | Corridor moving | `dync_scene1.py` | Columns | Bounce/wrap at X bounds | 1 |
 | Crossing peds | `sim_exp_1.py` | 2 cylinders | Diagonal crossing + ID jitter sim | 2 |
 | Single crossing | `crossing_pedestrian.py` | 1 cylinder | L-to-R constant y | 3 |
@@ -201,6 +201,9 @@ roslaunch my_tb3_description dync_obs.launch scene:=2
 
 # Multi-method experiment batch
 bash exp/scripts/run_avoidance_exp.sh
+
+# Parse T-MPC planner logs (after a tmpc_doa run)
+python3 exp/scripts/parse_tmpc_log.py ~/.ros/log/latest/mpc_planner-*.log
 ```
 
 ## 快速索引 (Quick Index)
@@ -213,6 +216,7 @@ bash exp/scripts/run_avoidance_exp.sh
 | 加新场景 | `my_tb3_description/scripts/` + `dync_obs.launch` |
 | 跑实验 | `exp/scripts/run_avoidance_exp.sh` 或 `exp/launch/avoidance_exp.launch` |
 | 分析bag数据 | `exp/scripts/stats_viz/` (13个脚本) |
+| 分析T-MPC日志 | `exp/scripts/parse_tmpc_log.py` — 解析 mpc_planner ROS log, 汇总 solve rate / timing / failures |
 | 生成论文图 | `exp/scripts/stats_viz/sup_exp_figures.py` |
 | T-MPC bridge | `mpc_nav/scripts/doa_to_tmpc.py` + `tmpc_doa.launch` |
 | DOA内部架构 | `docs/code_audit/` (完整审计文档) |

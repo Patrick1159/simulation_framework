@@ -17,14 +17,8 @@
   ┃   stage1_only — coarse tracker publishes umap/Obstacles,              ┃
   ┃                doa_to_obstacles.py expects umap/TrackerDetailArray    ┃
   ┃                                                                       ┃
-  ┃   dodt       — onboard_detector publishes MarkerArray,                ┃
-  ┃                doa_to_obstacles.py expects TrackerDetailArray         ┃
-  ┃                                                                       ┃
-  ┃   fapp       — mot_mapping publishes ObjectsStates,                   ┃
-  ┃                doa_to_obstacles.py expects TrackerDetailArray         ┃
-  ┃                                                                       ┃
-  ┃ All three produce rx-errors on the adapter topic and MPC receives     ┃
-  ┃ zero obstacles. Dedicated bridge nodes are needed for each method.    ┃
+  ┃ dodt is bridged via dodt_to_tmpc.py → /doa_obstacles_tmpc.           ┃
+  ┃ fapp is bridged via fapp_to_tmpc.py → /doa_obstacles_tmpc.           ┃
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 -->
 <launch>
@@ -46,13 +40,22 @@
       <remap from="/camera/color/image_raw" to="$(arg rgb_topic)"/>
     </node>
     <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
+    <node pkg="umap" type="detailed_match" name="detailed_match_tracker" output="screen"/>
     <node pkg="umap" type="para_samnode.py" name="para_sam_node" output="screen">
       <param name="image_topic" value="$(arg rgb_topic)"/>
+      <param name="sam_image_size" value="48"/>
     </node>
     <node pkg="umap" type="para_clipnode.py" name="para_clip_node" output="screen">
       <param name="image_topic" value="$(arg rgb_topic)"/>
     </node>
-    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen"/>
+    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen">
+      <!-- SAM-triggered passthrough: CLIP (14ms) always finishes before SAM
+           (33ms), so the cached CLIP features are always fresh when SAM
+           triggers publication.  This eliminates the 150-180ms sync_wait
+           caused by ApproximateTimeSynchronizer pairing mismatched frames,
+           and increases throughput from ~5.6 Hz to ~12.6 Hz. -->
+      <param name="passthrough_clip" value="true"/>
+    </node>
 
     <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose" output="screen">
       <param name="parent_frame_id" value="odom"/>
@@ -76,18 +79,19 @@
 
     <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
       <param name="input_topic" value="/rematch/tracker_details"/>
+      <param name="max_age" value="1.0"/>
     </node>
   </group>
 
   <!-- =====================================================================
        ours_no_clip: ours_full without para_clip_node; CLIP contribution
-       suppressed via SIMILARITY_THRESHOLD=-1 / SIMILARITY_WEIGHT=0 (exposed
-       via <env> so upstream nodes can pick them up without source edits).
+       suppressed via SIMILARITY_THRESHOLD=-1 / SIMILARITY_WEIGHT=0 (set as
+       ROS params so detailed_match reads them from the param server).
        See comment inside the group for caveat about missing dummy publisher.
        ===================================================================== -->
   <group if="$(eval arg('method') == 'ours_no_clip')">
-    <env name="SIMILARITY_THRESHOLD" value="-1"/>
-    <env name="SIMILARITY_WEIGHT" value="0"/>
+    <param name="rematch_node/SIMILARITY_THRESHOLD" value="-1.0"/>
+    <param name="rematch_node/SIMILARITY_WEIGHT" value="0.0"/>
 
     <rosparam command="load" file="$(find umap)/config/simulation.yaml"/>
 
@@ -96,15 +100,19 @@
       <remap from="/camera/color/image_raw" to="$(arg rgb_topic)"/>
     </node>
     <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
+    <node pkg="umap" type="detailed_match" name="detailed_match_tracker" output="screen"/>
     <node pkg="umap" type="para_samnode.py" name="para_sam_node" output="screen">
       <param name="image_topic" value="$(arg rgb_topic)"/>
+      <param name="run_sam" value="true"/>
     </node>
-    <!-- CLIP replaced by dummy features -->
-    <!-- ours_no_clip: CLIP node omitted. Rematch will receive empty similarity features
-         (no dummy publisher available in this codebase). If rematch requires a
-         features topic to be present, this method will need a small dummy publisher
-         added in a follow-up patch. -->
-    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen"/>
+    <!-- CLIP disabled: node still runs to publish dummy features for para_aggregate sync -->
+    <node pkg="umap" type="para_clipnode.py" name="para_clip_node" output="screen">
+      <param name="image_topic" value="$(arg rgb_topic)"/>
+      <param name="run_clip" value="false"/>
+    </node>
+    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen">
+      <param name="passthrough_clip" value="true"/>
+    </node>
 
     <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose" output="screen">
       <param name="parent_frame_id" value="odom"/>
@@ -128,6 +136,7 @@
 
     <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
       <param name="input_topic" value="/rematch/tracker_details"/>
+      <param name="max_age" value="1.0"/>
     </node>
   </group>
 
@@ -142,11 +151,15 @@
       <remap from="/camera/color/image_raw" to="$(arg rgb_topic)"/>
     </node>
     <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
-    <!-- SAM disabled -->
+    <node pkg="umap" type="detailed_match" name="detailed_match_tracker" output="screen"/>
     <node pkg="umap" type="para_clipnode.py" name="para_clip_node" output="screen">
       <param name="image_topic" value="$(arg rgb_topic)"/>
     </node>
-    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen"/>
+    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen">
+      <!-- SAM disabled: publish each CLIP message directly with CLIP geometry
+           and CLIP features. This is the clean no-SAM ablation path. -->
+      <param name="passthrough_sam" value="true"/>
+    </node>
 
     <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose" output="screen">
       <param name="parent_frame_id" value="odom"/>
@@ -170,6 +183,7 @@
 
     <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
       <param name="input_topic" value="/rematch/tracker_details"/>
+      <param name="max_age" value="1.0"/>
     </node>
   </group>
 
@@ -204,28 +218,74 @@
 
   <!-- =====================================================================
        dodt: onboard_detector baseline.
-       NOTE: onboard_detector publishes visualization_msgs/MarkerArray on
-       /onboard_detector/dynamic_bboxes; doa_to_obstacles.py expects
-       umap/TrackerDetailArray. The remap below redirects subscription, but
-       a separate bridge node is required for end-to-end functionality.
-       TODO confirm DODT output topic + add message-type bridge.
+       onboard_detector publishes visualization_msgs/MarkerArray (LINE_LIST)
+       on /onboard_detector/tracked_bboxes (all tracked objects) and
+       /onboard_detector/dynamic_bboxes (dynamic-classified only).
+       dodt_to_tmpc.py bridges tracked_bboxes → /doa_obstacles_tmpc because:
+         - dynamic_bboxes requires ~10 frames of voting to gate as dynamic
+           (multi-second blind spot) and applies constrain_size filtering;
+         - tracked_bboxes is available immediately after DBSCAN detection.
+       detector_param.yaml must have target_object_size matching sim cylinders
+       ([0.6, 0.6, 1.0]) and localization_mode=1 with odom_topic=/odom.
        ===================================================================== -->
   <group if="$(eval arg('method') == 'dodt')">
     <include file="$(find onboard_detector)/launch/run_detector.launch"/>
-    <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
-      <param name="input_topic" value="/onboard_detector/dynamic_bboxes"/>
+    <node pkg="mpc_nav" type="dodt_to_tmpc.py" name="dodt_to_tmpc" output="screen">
+      <param name="N" value="30"/>
+      <param name="dt" value="0.2"/>
+      <param name="target_frame" value="odom"/>
+      <param name="watchdog_timeout" value="0.5"/>
     </node>
   </group>
 
   <!-- =====================================================================
        fapp: FAPP depth-only mapping + DBSCAN clustering baseline.
-       Publishes obj_state_msgs/ObjectsStates on /states (message-type
-       mismatch with adapter; same caveat as `dodt`).
+       mot_mapping publishes obj_state_msgs/ObjectsStates on /states.
+       fapp_to_tmpc.py bridges /states → /doa_obstacles_tmpc directly
+       (bypasses doa_to_obstacles.py which expects umap/TrackerDetailArray).
+
+       mot_mapping's pointsBodyToWorld() has its rotation commented out and
+       assumes input cloud is already in world/odom frame. Raw /d435/depth/points
+       is in camera-local frame (d435_link), so we must first run
+       pointcloud_generator (same as ours_* methods) to project depth into odom
+       frame. sim_mapping.launch remaps /map_generator/obj_cloud to the
+       pointcloud_generator output /RED/pointcloud_process/pointcloud.
        ===================================================================== -->
   <group if="$(eval arg('method') == 'fapp')">
+    <!-- Project D435 depth into odom frame (same nodes as ours_* methods) -->
+    <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose" output="screen">
+      <param name="parent_frame_id" value="odom"/>
+      <param name="child_frame_id" value="d435_color_optical_frame"/>
+    </node>
+    <node name="camera_node" pkg="pointcloud_generator" type="processor" output="screen">
+      <rosparam file="$(find pointcloud_generator)/param/sim_param.yaml" command="load"/>
+      <param name="/camera/pointcloud_frame_id" value="odom"/>
+      <!-- dynamic_only=false: fapp has no /model_output/obstacles to mask with.
+           static_only=true: removes ground points (z < static_ground_z_max) without
+           needing bbox masks — curr_edge_pts is empty so the dynamic-exclusion
+           branch never fires. This gives mot_mapping a ground-free point cloud
+           while preserving all obstacle points. -->
+      <param name="/pointcloud_generate/dynamic_only" value="false"/>
+      <param name="/pointcloud_generate/static_only" value="true"/>
+      <param name="/pointcloud_generate/static_ground_z_max" value="0.08"/>
+      <param name="/pointcloud_generate/camera/view_field" value="4.0"/>
+      <param name="/pointcloud_generate/camera/self_filter" value="0.0025"/>
+      <param name="/pointcloud_generate/camera/grid_size" value="0.05"/>
+      <param name="/pointcloud_generate/camera/eud_range" value="0.01"/>
+      <param name="/pointcloud_generate/camera/eud_min_points_num" value="1"/>
+      <remap from="/RED/pointcloud_process/camera_pose" to="/camera/current_pose"/>
+      <remap from="/RED/pointcloud_process/odom" to="/odom"/>
+      <remap from="/RED/pointcloud_process/color_image" to="$(arg rgb_topic)"/>
+      <remap from="/RED/pointcloud_process/depth_image" to="$(arg aligned_depth_topic)"/>
+      <remap from="/model_output/obstacles" to="/model_output/obstacles"/>
+    </node>
+
     <include file="$(find mot_mapping)/launch/sim_mapping.launch"/>
-    <node pkg="mpc_nav" type="doa_to_obstacles.py" name="doa_adapter" output="screen">
-      <param name="input_topic" value="/states"/>
+    <node pkg="mpc_nav" type="fapp_to_tmpc.py" name="fapp_to_tmpc" output="screen">
+      <param name="N" value="30"/>
+      <param name="dt" value="0.2"/>
+      <param name="target_frame" value="odom"/>
+      <param name="watchdog_timeout" value="0.5"/>
     </node>
   </group>
 
