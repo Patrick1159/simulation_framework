@@ -86,6 +86,28 @@ def test_deterministic_zero_semiaxis():
     assert all(v == 0.0 for v in g.minor_semiaxis)
 
 
+def test_mode_b_constant_rate_not_growing():
+    cfg = make_cfg(emit_uncertainty=True, rate_floor=0.05, rate_ceil=0.5)
+    obs = bridge.tracker_to_obstacle(make_tracker(s_vxvx=0.04, s_vyvy=0.01), cfg)
+    g = obs.gaussians[0]
+    expected = math.sqrt(0.04)  # = 0.2, within [floor, ceil]
+    assert all(math.isclose(v, expected, abs_tol=1e-6) for v in g.major_semiaxis)
+    assert all(math.isclose(v, expected, abs_tol=1e-6) for v in g.minor_semiaxis)
+    assert math.isclose(g.major_semiaxis[0], g.major_semiaxis[-1], abs_tol=1e-9)
+
+
+def test_mode_b_floor_and_ceil():
+    cfg_floor = make_cfg(emit_uncertainty=True, rate_floor=0.1, rate_ceil=0.5)
+    obs = bridge.tracker_to_obstacle(make_tracker(s_vxvx=0.0, s_vyvy=0.0), cfg_floor)
+    assert all(math.isclose(v, 0.1, abs_tol=1e-6)
+               for v in obs.gaussians[0].major_semiaxis)
+
+    cfg_ceil = make_cfg(emit_uncertainty=True, rate_floor=0.05, rate_ceil=0.3)
+    obs2 = bridge.tracker_to_obstacle(make_tracker(s_vxvx=100.0, s_vyvy=100.0), cfg_ceil)
+    assert all(math.isclose(v, 0.3, abs_tol=1e-6)
+               for v in obs2.gaussians[0].major_semiaxis)
+
+
 if __name__ == "__main__":
     # Plain-python3 runner (pytest unavailable in this workspace). Runs every
     # top-level test_* function and reports pass/fail.
