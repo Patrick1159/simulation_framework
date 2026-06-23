@@ -96,6 +96,14 @@ class DOAToMPCAdapter:
         # --- ROS parameters ---
         self.N = rospy.get_param('~N', 30)
         self.dt = rospy.get_param('~dt', 0.2)
+        self.cv_horizon = rospy.get_param('~cv_horizon', 1.0)
+        self.v_min = rospy.get_param('~v_min', 0.1)
+        self.emit_uncertainty = rospy.get_param('~emit_uncertainty', False)
+        self.rate_floor = rospy.get_param('~rate_floor', 0.05)
+        self.rate_ceil = rospy.get_param('~rate_ceil', 0.5)
+        self.k_cv = max(1, int(round(self.cv_horizon / self.dt)))
+        assert self.cv_horizon > 0.0, "cv_horizon must be positive"
+        assert self.v_min >= 0.0, "v_min must be non-negative"
         self.max_age = rospy.get_param('~max_age', 0.5)
         self.velocity_limit = rospy.get_param('~velocity_limit', 5.0)
         self.target_frame = rospy.get_param('~target_frame', 'odom')
@@ -145,131 +153,70 @@ class DOAToMPCAdapter:
 
         marker_array = MarkerArray() if self.publish_markers else None
 
+        cfg = BridgeConfig(
+            N=self.N, dt=self.dt, k_cv=self.k_cv, v_min=self.v_min,
+            velocity_limit=self.velocity_limit,
+            emit_uncertainty=self.emit_uncertainty,
+            rate_floor=self.rate_floor, rate_ceil=self.rate_ceil,
+            target_frame=self.target_frame, stamp=msg.header.stamp,
+        )
+
         for idx, tracker in enumerate(msg.trackers):
-            # 1. Skip trackers older than max_age
             if tracker.age > self.max_age:
                 continue
 
-            # 2. Create obstacle with id
-            obs = ObstacleGMM()
-            obs.id = tracker.tracker_id
-
-            # 3. Set current position
-            obs.pose.position = tracker.position
-
-            # 4. Set orientation from velocity direction
-            vx = tracker.velocity.x
-            vy = tracker.velocity.y
-            v_mag = math.sqrt(vx * vx + vy * vy)
-
-            if v_mag < 0.01:
-                obs.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
-                yaw = 0.0
-            else:
-                yaw = math.atan2(vy, vx)
-                q = tft.quaternion_from_euler(0, 0, yaw)
-                obs.pose.orientation = Quaternion(x=q[0], y=q[1], z=q[2], w=q[3])
-
-            # 5. Clamp velocity magnitude
-            if v_mag > self.velocity_limit:
-                scale = self.velocity_limit / v_mag
-                cvx = vx * scale
-                cvy = vy * scale
-            else:
-                cvx = vx
-                cvy = vy
-
-            # 6. Build prediction for k = 1 .. N-1
-            gaussian = Gaussian()
-            gaussian.mean.header.stamp = msg.header.stamp
-            gaussian.mean.header.frame_id = self.target_frame
-
-            has_uncertainty = (tracker.sigma2_xx > 0.0)
-
-            for k in range(1, self.N):
-                dt_k = self.dt * k
-
-                px_k = tracker.position.x + cvx * dt_k
-                py_k = tracker.position.y + cvy * dt_k
-
-                ps = PoseStamped()
-                ps.header.stamp = msg.header.stamp
-                ps.header.frame_id = self.target_frame
-                ps.pose.position = Point(x=px_k, y=py_k, z=tracker.position.z)
-                ps.pose.orientation = obs.pose.orientation
-
-                gaussian.mean.poses.append(ps)
-
-                if has_uncertainty:
-                    sigma_x = math.sqrt(tracker.sigma2_xx +
-                                        (dt_k * dt_k) * tracker.sigma2_vxvx)
-                    sigma_y = math.sqrt(tracker.sigma2_yy +
-                                        (dt_k * dt_k) * tracker.sigma2_vyvy)
-                    gaussian.major_semiaxis.append(max(sigma_x, sigma_y))
-                    gaussian.minor_semiaxis.append(min(sigma_x, sigma_y))
-                else:
-                    gaussian.major_semiaxis.append(0.0)
-                    gaussian.minor_semiaxis.append(0.0)
-
-            obs.gaussians.append(gaussian)
-            obs.probabilities = [1.0]
-
+            obs = tracker_to_obstacle(tracker, cfg)
             out_msg.obstacles.append(obs)
 
-            # --- Visualization markers ---
             if self.publish_markers:
-                # SPHERE marker at current position, colored by confidence
-                sphere = Marker()
-                sphere.header = out_msg.header
-                sphere.ns = "doa_tmpc"
-                sphere.id = idx * 2
-                sphere.type = Marker.SPHERE
-                sphere.action = Marker.ADD
-                sphere.pose = obs.pose
-                box_x = max(float(tracker.box_dimensions.x), 0.1)
-                box_y = max(float(tracker.box_dimensions.y), 0.1)
-                box_z = max(float(tracker.box_dimensions.z), 0.1)
-                sphere.scale.x = box_x
-                sphere.scale.y = box_y
-                sphere.scale.z = box_z
-                conf = tracker.confidence
-                sphere.color.r = 1.0 - conf
-                sphere.color.g = conf
-                sphere.color.b = 0.0
-                sphere.color.a = 0.6
-                sphere.lifetime = rospy.Duration(0.2)
-                marker_array.markers.append(sphere)
-
-                # ARROW marker showing velocity direction
-                arrow = Marker()
-                arrow.header = out_msg.header
-                arrow.ns = "doa_tmpc"
-                arrow.id = idx * 2 + 1
-                arrow.type = Marker.ARROW
-                arrow.action = Marker.ADD
-                arrow.scale.x = 0.05   # shaft diameter
-                arrow.scale.y = 0.1    # head diameter
-                arrow.scale.z = 0.1    # head length
-                arrow.color.r = 1.0
-                arrow.color.g = 0.4
-                arrow.color.b = 0.1
-                arrow.color.a = 0.9
-                arrow.lifetime = rospy.Duration(0.2)
-
-                arrow_start = Point(x=tracker.position.x,
-                                    y=tracker.position.y,
-                                    z=tracker.position.z)
-                arrow_len = max(0.2, v_mag)
-                arrow_end = Point(x=tracker.position.x + cvx * arrow_len,
-                                  y=tracker.position.y + cvy * arrow_len,
-                                  z=tracker.position.z)
-                arrow.points.append(arrow_start)
-                arrow.points.append(arrow_end)
-                marker_array.markers.append(arrow)
+                self._append_markers(marker_array, idx, tracker, obs)
 
         self.pub.publish(out_msg)
         if self.publish_markers:
             self.marker_pub.publish(marker_array)
+
+    def _append_markers(self, marker_array, idx, tracker, obs):
+        sphere = Marker()
+        sphere.header.frame_id = self.target_frame
+        sphere.header.stamp = obs.gaussians[0].mean.header.stamp
+        sphere.ns = "doa_tmpc"
+        sphere.id = idx * 2
+        sphere.type = Marker.SPHERE
+        sphere.action = Marker.ADD
+        sphere.pose = obs.pose
+        sphere.scale.x = max(float(tracker.box_dimensions.x), 0.1)
+        sphere.scale.y = max(float(tracker.box_dimensions.y), 0.1)
+        sphere.scale.z = max(float(tracker.box_dimensions.z), 0.1)
+        conf = tracker.confidence
+        sphere.color.r = 1.0 - conf
+        sphere.color.g = conf
+        sphere.color.b = 0.0
+        sphere.color.a = 0.6
+        sphere.lifetime = rospy.Duration(0.2)
+        marker_array.markers.append(sphere)
+
+        arrow = Marker()
+        arrow.header = sphere.header
+        arrow.ns = "doa_tmpc"
+        arrow.id = idx * 2 + 1
+        arrow.type = Marker.ARROW
+        arrow.action = Marker.ADD
+        arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.05, 0.1, 0.1
+        arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = 1.0, 0.4, 0.1, 0.9
+        arrow.lifetime = rospy.Duration(0.2)
+        vx, vy = tracker.velocity.x, tracker.velocity.y
+        v_mag = math.sqrt(vx * vx + vy * vy)
+        if v_mag > self.velocity_limit and v_mag > 0.0:
+            s = self.velocity_limit / v_mag
+            vx, vy = vx * s, vy * s
+        arrow_len = max(0.2, v_mag)
+        start = Point(x=tracker.position.x, y=tracker.position.y, z=tracker.position.z)
+        end = Point(x=tracker.position.x + vx * arrow_len,
+                    y=tracker.position.y + vy * arrow_len,
+                    z=tracker.position.z)
+        arrow.points.append(start)
+        arrow.points.append(end)
+        marker_array.markers.append(arrow)
 
     def _watchdog_callback(self, event):
         if not self._received_first_msg:
