@@ -45,6 +45,13 @@ if [[ -n "${ACADOS_SOURCE_DIR:-}" ]] && [[ ":${LD_LIBRARY_PATH:-}:" != *":${ACAD
   export LD_LIBRARY_PATH="${ACADOS_SOURCE_DIR}/lib:${LD_LIBRARY_PATH:-}"
 fi
 
+# Planner config the solver was built with (written by the solver generator).
+PLANNER="lmpcc_goal"
+if [[ -f "$WS_ROOT/.planner_config" ]]; then
+  PLANNER="$(tr -d '[:space:]' < "$WS_ROOT/.planner_config")"
+  [[ -z "$PLANNER" ]] && PLANNER="lmpcc_goal"
+fi
+
 ALLOWED_SUBSCENES=(pair_crossing front_crossing random_multi corridor occlusion)
 ALLOWED_METHODS=(ours_full ours_no_clip ours_no_sam stage1_only dodt fapp oracle_gt)
 
@@ -181,6 +188,7 @@ DSCENE="$(dyn_scene_for_subscene "$SUBSCENE")"
 
 log "subscene=$SUBSCENE method=$METHOD dyn_scene=$DSCENE duration=$DURATION repeats=$REPEATS"
 log "config=$ABS_CONFIG"
+log "planner=$PLANNER"
 log "out_root=$OUT_ROOT"
 
 # ----- Trap to clean up background processes -----------------------------
@@ -218,11 +226,12 @@ for ((i=1; i<=LOOP_END; i++)); do
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
     dry_echo "mkdir -p $RUN_DIR"
+    dry_echo "echo $PLANNER > $RUN_DIR/planner.txt"
     dry_echo "df-check >= ${FREE_DISK_MIN_GB} GB on $RUN_DIR"
     if [[ "$METHOD" == "fapp" ]]; then
       dry_echo "python3 -c 'import obj_state_msgs'  (skip run if missing)"
     fi
-    dry_echo "roslaunch sup_exp avoidance_exp.launch method:=$METHOD dynamic_scene:=$DSCENE config_file:=$ABS_CONFIG use_rviz:=$USE_RVIZ gui:=$GUI enable_navigation:=$ENABLE_NAV scene_seed:=$SEED &"
+    dry_echo "roslaunch sup_exp avoidance_exp.launch method:=$METHOD dynamic_scene:=$DSCENE config_file:=$ABS_CONFIG use_rviz:=$USE_RVIZ gui:=$GUI enable_navigation:=$ENABLE_NAV scene_seed:=$SEED planner:=$PLANNER &"
     dry_echo "sleep $WARMUP_SEC  # warmup"
     if [[ "$METHOD" == "fapp" ]]; then
       dry_echo "sleep 3  # fapp extra delay (perception init)"
@@ -248,6 +257,7 @@ for ((i=1; i<=LOOP_END; i++)); do
   fi
 
   mkdir -p "$RUN_DIR"
+  echo "$PLANNER" > "$RUN_DIR/planner.txt"
 
   # Disk check
   AVAIL_GB="$(df --output=avail -B1G "$RUN_DIR" | tail -1 | tr -d ' ')"
@@ -273,7 +283,8 @@ for ((i=1; i<=LOOP_END; i++)); do
     use_rviz:="$USE_RVIZ" \
     gui:="$GUI" \
     enable_navigation:="$ENABLE_NAV" \
-    scene_seed:="$SEED" &
+    scene_seed:="$SEED" \
+    planner:="$PLANNER" &
   LAUNCH_PID=$!
 
   log "warmup ${WARMUP_SEC}s"

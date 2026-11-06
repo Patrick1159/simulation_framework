@@ -19,3 +19,4 @@ src/mpc_planner/acados/
 /src/figures/*.png
 /figures/*.pdf
 /figures/*.png
+/.planner_config

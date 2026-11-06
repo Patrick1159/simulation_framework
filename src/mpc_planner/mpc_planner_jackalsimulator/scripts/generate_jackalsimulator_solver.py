@@ -127,15 +127,29 @@ settings = load_settings()
 # model, modules = configuration_basic(settings)
 # model, modules = configuration_no_obstacles(settings)
 
-# NOTE: LMPCC - basic MPC with deterministic obstacle avoidance
-# model, modules = configuration_lmpcc(settings)
-
-# NOTE: T-MPC - Parallelized MPC optimizing trajectories with several distinct passing behaviors.
-model, modules = configuration_lmpcc(settings)
+# Select the configuration with env var MPC_CONFIG (default: lmpcc_goal).
+#   lmpcc_goal : goal-tracking LMPCC (GoalModule + EllipsoidConstraint), goal from /move_base_simple/goal
+#   lmpcc      : contouring + EllipsoidConstraint (needs a reference path)
+#   tmpc       : contouring + GuidanceConstraint(Ellipsoid) (needs a reference path)
+CONFIGURATIONS = {
+    "lmpcc_goal": configuration_lmpcc,
+    "lmpcc": configuration_basic,
+    "tmpc": configuration_tmpc,
+}
+config_name = os.environ.get("MPC_CONFIG", "lmpcc_goal") or "lmpcc_goal"
+if config_name not in CONFIGURATIONS:
+    sys.exit("ERROR: unknown MPC_CONFIG '%s' (allowed: %s)" % (config_name, ", ".join(CONFIGURATIONS)))
+print("Generating solver with MPC_CONFIG=%s" % config_name)
+model, modules = CONFIGURATIONS[config_name](settings)
 
 # NOTE: SH-MPC - MPC incorporating non Gaussian uncertainty in obstacle motion. 
 # More configuration parameters in `scenario_module/config/params.yaml`
 # model, modules = configuration_safe_horizon(settings)
 
 generate_solver(modules, model, settings)
+
+# Record the chosen config at the workspace root (directory containing src/).
+_ws_root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".."))
+with open(os.path.join(_ws_root, ".planner_config"), "w") as _f:
+    _f.write(config_name + "\n")
 exit(0)

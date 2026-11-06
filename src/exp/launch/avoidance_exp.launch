@@ -19,6 +19,8 @@
   <arg name="enable_navigation" default="true"/>
   <!-- Per-trial randomization seed for the crossing scene (scene 2). -1 = deterministic. -->
   <arg name="scene_seed" default="-1"/>
+  <!-- MPC config the solver was built with: lmpcc_goal | lmpcc | tmpc (see docker/select_planner.sh) -->
+  <arg name="planner" default="lmpcc_goal"/>
 
   <!-- 1. Scene config. The yaml's top-level is already `scene:` (and
        `runner:`), so we load it without a namespace; this produces
@@ -92,6 +94,11 @@
 
   <!-- 7. T-MPC planner (LMPCC: GoalModule + EllipsoidConstraint)
        Disabled when enable_navigation=false (perception-only mode). -->
+  <!-- T-MPC needs the guidance_planner params (global namespace, read via
+       ros::NodeHandle("guidance_planner/...")); same load as the package's own launch. -->
+  <group if="$(eval arg('enable_navigation') and arg('planner') == 'tmpc')">
+    <rosparam command="load" file="$(find mpc_planner_jackalsimulator)/config/guidance_planner.yaml"/>
+  </group>
   <group if="$(arg enable_navigation)">
     <node pkg="mpc_planner_jackalsimulator" type="jackalsimulator_planner"
           name="mpc_planner" output="screen" required="true">
@@ -100,6 +107,10 @@
       <remap from="/input/obstacles" to="/doa_obstacles_tmpc"/>
       <remap from="/output/command" to="/cmd_vel"/>
     </node>
+    <!-- Contouring-based configs (lmpcc, tmpc) need a reference path; same path for both. -->
+    <group if="$(eval arg('planner') in ['lmpcc', 'tmpc'])">
+      <node pkg="sup_exp" type="reference_path_publisher.py" name="reference_path_publisher" output="screen"/>
+    </group>
   </group>
 
   <!-- 8. Goal publisher (reads /scene/goal_pose from the loaded yaml and
