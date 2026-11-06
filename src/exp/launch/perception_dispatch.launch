@@ -41,14 +41,14 @@
     </node>
     <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
     <node pkg="umap" type="detailed_match" name="detailed_match_tracker" output="screen"/>
-    <node pkg="umap" type="para_samnode.py" name="para_sam_node" output="screen">
+    <node pkg="umap" type="para_samnode.py" launch-prefix="$(optenv SCOT_PERCEPTION_PY python3)" name="para_sam_node" output="screen">
       <param name="image_topic" value="$(arg rgb_topic)"/>
       <param name="sam_image_size" value="48"/>
     </node>
-    <node pkg="umap" type="para_clipnode.py" name="para_clip_node" output="screen">
+    <node pkg="umap" type="para_clipnode.py" launch-prefix="$(optenv SCOT_PERCEPTION_PY python3)" name="para_clip_node" output="screen">
       <param name="image_topic" value="$(arg rgb_topic)"/>
     </node>
-    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen">
+    <node pkg="umap" type="para_aggregate.py" launch-prefix="$(optenv SCOT_PERCEPTION_PY python3)" name="para_aggregate_node" output="screen">
       <!-- SAM-triggered passthrough: CLIP (14ms) always finishes before SAM
            (33ms), so the cached CLIP features are always fresh when SAM
            triggers publication.  This eliminates the 150-180ms sync_wait
@@ -101,16 +101,16 @@
     </node>
     <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
     <node pkg="umap" type="detailed_match" name="detailed_match_tracker" output="screen"/>
-    <node pkg="umap" type="para_samnode.py" name="para_sam_node" output="screen">
+    <node pkg="umap" type="para_samnode.py" launch-prefix="$(optenv SCOT_PERCEPTION_PY python3)" name="para_sam_node" output="screen">
       <param name="image_topic" value="$(arg rgb_topic)"/>
       <param name="run_sam" value="true"/>
     </node>
     <!-- CLIP disabled: node still runs to publish dummy features for para_aggregate sync -->
-    <node pkg="umap" type="para_clipnode.py" name="para_clip_node" output="screen">
+    <node pkg="umap" type="para_clipnode.py" launch-prefix="$(optenv SCOT_PERCEPTION_PY python3)" name="para_clip_node" output="screen">
       <param name="image_topic" value="$(arg rgb_topic)"/>
       <param name="run_clip" value="false"/>
     </node>
-    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen">
+    <node pkg="umap" type="para_aggregate.py" launch-prefix="$(optenv SCOT_PERCEPTION_PY python3)" name="para_aggregate_node" output="screen">
       <param name="passthrough_clip" value="true"/>
     </node>
 
@@ -152,10 +152,10 @@
     </node>
     <node pkg="umap" type="coarse_match" name="coarse_match_tracker" output="screen"/>
     <node pkg="umap" type="detailed_match" name="detailed_match_tracker" output="screen"/>
-    <node pkg="umap" type="para_clipnode.py" name="para_clip_node" output="screen">
+    <node pkg="umap" type="para_clipnode.py" launch-prefix="$(optenv SCOT_PERCEPTION_PY python3)" name="para_clip_node" output="screen">
       <param name="image_topic" value="$(arg rgb_topic)"/>
     </node>
-    <node pkg="umap" type="para_aggregate.py" name="para_aggregate_node" output="screen">
+    <node pkg="umap" type="para_aggregate.py" launch-prefix="$(optenv SCOT_PERCEPTION_PY python3)" name="para_aggregate_node" output="screen">
       <!-- SAM disabled: publish each CLIP message directly with CLIP geometry
            and CLIP features. This is the clean no-SAM ablation path. -->
       <param name="passthrough_sam" value="true"/>

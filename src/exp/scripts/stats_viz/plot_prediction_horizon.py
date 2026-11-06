@@ -2,7 +2,7 @@
 """Plot prediction RMSE vs horizon for all methods."""
 import matplotlib.pyplot as plt
 import numpy as np
-import csv, os, sys
+import argparse, csv, os, sys
 
 # Data: read prediction_error.csv from each method
 methods = {
@@ -36,6 +36,9 @@ ax.grid(True, alpha=0.3)
 ax.set_xlim(0, 3.2)
 
 plt.tight_layout()
-out = '/home/patrick/sim_dev/simulation_framework/figures/fig_prediction_rmse_horizon.pdf'
+_ap = argparse.ArgumentParser()
+_ap.add_argument('--output', default='figures/fig_prediction_rmse_horizon.pdf')
+out = _ap.parse_args().output
+os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
 plt.savefig(out, dpi=150, bbox_inches='tight')
 print(f'Saved to {out}')

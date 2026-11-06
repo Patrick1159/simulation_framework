@@ -15,6 +15,7 @@ Per-run choice reflects fixed seed=42 (identical obstacle motion):
   fapp      -> run_3 (penetrates, min_clr=-0.09 m)
 """
 
+import argparse
 import csv
 import os
 
@@ -26,8 +27,7 @@ from matplotlib.lines import Line2D
 import numpy as np
 
 DATA_ROOT = "/data/rosbags/avoidance/random_multi"
-OUTPUT = ("/home/patrick/sim_dev/simulation_framework/figures/"
-          "fig_robot_trajectory_compare.pdf")
+OUTPUT = "figures/fig_robot_trajectory_compare.pdf"  # overridable via --output
 
 # method_key -> (run, label, color, collides)
 SERIES = [
@@ -96,6 +96,10 @@ def obstacle_velocity(rows, crit):
 
 
 def main():
+    global OUTPUT
+    _ap = argparse.ArgumentParser()
+    _ap.add_argument('--output', default=OUTPUT)
+    OUTPUT = _ap.parse_args().output
     fig, ax = plt.subplots(figsize=(5.5, 8))
 
     for key, run, label, color, collides in SERIES:
@@ -182,7 +186,7 @@ def main():
     ax.legend(handles=handles, loc="upper right", fontsize=8.5,
               framealpha=0.9)
 
-    os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)
+    os.makedirs(os.path.dirname(OUTPUT) or '.', exist_ok=True)
     fig.tight_layout()
     fig.savefig(OUTPUT, bbox_inches="tight")
     png_path = os.path.splitext(OUTPUT)[0] + ".png"

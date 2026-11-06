@@ -23,7 +23,7 @@ Per-method run reflects fixed seed=42 (identical obstacle motion across methods)
 Usage:
   python3 plot_cmd_vel_traj_combined.py \
       --data-dir /data/rosbags/avoidance/random_multi \
-      --output /home/patrick/sim_dev/paper/reframe_draft/images/fig_cmd_vel_traj_combined.pdf
+      --output figures/fig_cmd_vel_traj_combined.pdf
 """
 
 import argparse
@@ -315,8 +315,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default="/data/rosbags/avoidance/random_multi")
     parser.add_argument("--output",
-                        default="/home/patrick/sim_dev/paper/reframe_draft/"
-                                "images/fig_cmd_vel_traj_combined.pdf")
+                        default="figures/fig_cmd_vel_traj_combined.pdf")
     parser.add_argument("--no-smooth", action="store_true")
     parser.add_argument("--no-band", action="store_true")
     args = parser.parse_args()

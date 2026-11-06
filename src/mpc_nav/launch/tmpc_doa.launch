@@ -4,9 +4,10 @@
     ====================================
     Starts: adapter + C++ MPC planner + Gazebo/TB3 + dynamic obstacles + RViz
 
-    DOA perception MUST be launched separately (needs fastsam conda env):
-      conda activate fastsam
-      source devel/setup.zsh
+    DOA perception MUST be launched separately. The perception nodes run under
+    $SCOT_PERCEPTION_PY (python with torch/CLIP/FastSAM; set in the Docker image,
+    falls back to python3):
+      source devel/setup.bash
       roslaunch umap simulation.launch
 
     NOTE: Both this launch and simulation.launch start RViz by default.
