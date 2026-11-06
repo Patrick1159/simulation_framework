@@ -77,7 +77,7 @@ Options:
   --perception-overrides PATH
                           yaml of DOA perception param overrides, loaded after
                           umap/config/simulation.yaml (only listed keys change). Absolute, or
-                          relative to src/exp/configs/ (e.g. perception_lowgate.yaml).
+                          relative to src/exp/configs/ (a yaml with only the keys to override).
                           Copied to each run dir as perception_overrides.yaml.
                           (default: none = v1 baseline)
   --out-root PATH         (default: src/exp/data/avoidance, relative to workspace root)
