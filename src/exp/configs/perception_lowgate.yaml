@@ -1,0 +1,2 @@
+tracker_node:
+  SUSTAINED_VELOCITY_THRESHOLD: 0.1   # v1: 0.3; scene obstacles move 0.1-1.0 m/s (pair_crossing 0.3) so v1 rejects most of them

@@ -74,6 +74,12 @@ Options:
                           the crossing scene (scene 2) so each trial differs.
   --config PATH           (default: auto: avoidance_corridor.yaml if subscene=corridor
                                        else avoidance_crossing.yaml)
+  --perception-overrides PATH
+                          yaml of DOA perception param overrides, loaded after
+                          umap/config/simulation.yaml (only listed keys change). Absolute, or
+                          relative to src/exp/configs/ (e.g. perception_lowgate.yaml).
+                          Copied to each run dir as perception_overrides.yaml.
+                          (default: none = v1 baseline)
   --out-root PATH         (default: src/exp/data/avoidance, relative to workspace root)
   --use-rviz {true|false} (default: false)
   --gui {true|false}      (default: true)
@@ -117,6 +123,7 @@ DURATION=""
 REPEATS=1
 BASE_SEED=-1
 CONFIG=""
+PERCEPTION_OVERRIDES=""
 OUT_ROOT=""
 USE_RVIZ="true"
 GUI="true"
@@ -133,6 +140,7 @@ while [[ $# -gt 0 ]]; do
     --repeats)       REPEATS="$2"; shift 2 ;;
     --base-seed)     BASE_SEED="$2"; shift 2 ;;
     --config)        CONFIG="$2"; shift 2 ;;
+    --perception-overrides) PERCEPTION_OVERRIDES="$2"; shift 2 ;;
     --out-root)      OUT_ROOT="$2"; shift 2 ;;
     --use-rviz)      USE_RVIZ="$2"; shift 2 ;;
     --gui)                GUI="$2"; shift 2 ;;
@@ -171,6 +179,21 @@ if [[ ! -f "$CONFIG" ]]; then
 fi
 ABS_CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
 
+# Perception parameter overrides (optional): absolute, or relative to $CONFIG_DIR.
+ABS_OVERRIDES=""
+if [[ -n "$PERCEPTION_OVERRIDES" ]]; then
+  if [[ "$PERCEPTION_OVERRIDES" == /* ]]; then
+    _ovr="$PERCEPTION_OVERRIDES"
+  else
+    _ovr="$CONFIG_DIR/$PERCEPTION_OVERRIDES"
+  fi
+  if [[ ! -f "$_ovr" ]]; then
+    log "ERROR: perception overrides file not found: $_ovr"
+    exit 2
+  fi
+  ABS_OVERRIDES="$(cd "$(dirname "$_ovr")" && pwd)/$(basename "$_ovr")"
+fi
+
 # Out root default
 if [[ -z "$OUT_ROOT" ]]; then
   OUT_ROOT="/data/rosbags/avoidance"
@@ -189,6 +212,7 @@ DSCENE="$(dyn_scene_for_subscene "$SUBSCENE")"
 log "subscene=$SUBSCENE method=$METHOD dyn_scene=$DSCENE duration=$DURATION repeats=$REPEATS"
 log "config=$ABS_CONFIG"
 log "planner=$PLANNER"
+log "perception_overrides=${ABS_OVERRIDES:-none}"
 log "out_root=$OUT_ROOT"
 
 # ----- Trap to clean up background processes -----------------------------
@@ -232,11 +256,16 @@ for ((i=1; i<=LOOP_END; i++)); do
   if [[ "$DRY_RUN" -eq 1 ]]; then
     dry_echo "mkdir -p $RUN_DIR"
     dry_echo "echo $PLANNER > $RUN_DIR/planner.txt"
+    if [[ -n "$ABS_OVERRIDES" ]]; then
+      dry_echo "cp $ABS_OVERRIDES $RUN_DIR/perception_overrides.yaml; echo $ABS_OVERRIDES > $RUN_DIR/perception_overrides.txt"
+    else
+      dry_echo "echo none > $RUN_DIR/perception_overrides.txt"
+    fi
     dry_echo "df-check >= ${FREE_DISK_MIN_GB} GB on $RUN_DIR"
     if [[ "$METHOD" == "fapp" ]]; then
       dry_echo "python3 -c 'import obj_state_msgs'  (skip run if missing)"
     fi
-    dry_echo "roslaunch sup_exp avoidance_exp.launch method:=$METHOD dynamic_scene:=$DSCENE config_file:=$ABS_CONFIG use_rviz:=$USE_RVIZ gui:=$GUI enable_navigation:=$ENABLE_NAV scene_seed:=$SEED planner:=$PLANNER auto_goal:=false &"
+    dry_echo "roslaunch sup_exp avoidance_exp.launch method:=$METHOD dynamic_scene:=$DSCENE config_file:=$ABS_CONFIG use_rviz:=$USE_RVIZ gui:=$GUI enable_navigation:=$ENABLE_NAV scene_seed:=$SEED planner:=$PLANNER auto_goal:=false${ABS_OVERRIDES:+ perception_overrides:=$ABS_OVERRIDES} &"
     dry_echo "sleep $WARMUP_SEC  # warmup"
     if [[ "$METHOD" == "fapp" ]]; then
       dry_echo "sleep 3  # fapp extra delay (perception init)"
@@ -271,6 +300,12 @@ for ((i=1; i<=LOOP_END; i++)); do
 
   mkdir -p "$RUN_DIR"
   echo "$PLANNER" > "$RUN_DIR/planner.txt"
+  if [[ -n "$ABS_OVERRIDES" ]]; then
+    cp "$ABS_OVERRIDES" "$RUN_DIR/perception_overrides.yaml"
+    echo "$ABS_OVERRIDES" > "$RUN_DIR/perception_overrides.txt"
+  else
+    echo none > "$RUN_DIR/perception_overrides.txt"
+  fi
 
   # Disk check
   AVAIL_GB="$(df --output=avail -B1G "$RUN_DIR" | tail -1 | tr -d ' ')"
@@ -298,7 +333,8 @@ for ((i=1; i<=LOOP_END; i++)); do
     enable_navigation:="$ENABLE_NAV" \
     scene_seed:="$SEED" \
     planner:="$PLANNER" \
-    auto_goal:=false &
+    auto_goal:=false \
+    ${ABS_OVERRIDES:+perception_overrides:="$ABS_OVERRIDES"} &
   LAUNCH_PID=$!
 
   log "warmup ${WARMUP_SEC}s"

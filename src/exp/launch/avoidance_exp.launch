@@ -25,6 +25,9 @@
        starts `rosrun sup_exp goal_publisher.py` itself once rosbag is recording,
        so the bag captures the start of motion. -->
   <arg name="auto_goal" default="true"/>
+  <!-- Absolute path to a yaml of DOA perception param overrides (loaded after
+       simulation.yaml; see perception_dispatch.launch). "" = none. -->
+  <arg name="perception_overrides" default=""/>
 
   <!-- 1. Scene config. The yaml's top-level is already `scene:` (and
        `runner:`), so we load it without a namespace; this produces
@@ -73,6 +76,7 @@
   <include file="$(find sup_exp)/launch/perception_dispatch.launch">
     <arg name="method" value="$(arg method)"/>
     <arg name="dynamic_scene" value="$(arg dynamic_scene)"/>
+    <arg name="perception_overrides" value="$(arg perception_overrides)"/>
   </include>
 
   <!-- 5. Static TF: world -> map (identity).
