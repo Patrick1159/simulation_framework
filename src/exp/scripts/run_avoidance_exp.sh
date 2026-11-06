@@ -194,7 +194,12 @@ log "out_root=$OUT_ROOT"
 # ----- Trap to clean up background processes -----------------------------
 LAUNCH_PID=""
 BAG_PID=""
+GOAL_PID=""
 cleanup() {
+  if [[ -n "${GOAL_PID:-}" ]] && kill -0 "$GOAL_PID" 2>/dev/null; then
+    kill -INT "$GOAL_PID" 2>/dev/null || true
+    wait "$GOAL_PID" 2>/dev/null || true
+  fi
   if [[ -n "${BAG_PID:-}" ]] && kill -0 "$BAG_PID" 2>/dev/null; then
     kill -INT "$BAG_PID" 2>/dev/null || true
     wait "$BAG_PID" 2>/dev/null || true
@@ -231,7 +236,7 @@ for ((i=1; i<=LOOP_END; i++)); do
     if [[ "$METHOD" == "fapp" ]]; then
       dry_echo "python3 -c 'import obj_state_msgs'  (skip run if missing)"
     fi
-    dry_echo "roslaunch sup_exp avoidance_exp.launch method:=$METHOD dynamic_scene:=$DSCENE config_file:=$ABS_CONFIG use_rviz:=$USE_RVIZ gui:=$GUI enable_navigation:=$ENABLE_NAV scene_seed:=$SEED planner:=$PLANNER &"
+    dry_echo "roslaunch sup_exp avoidance_exp.launch method:=$METHOD dynamic_scene:=$DSCENE config_file:=$ABS_CONFIG use_rviz:=$USE_RVIZ gui:=$GUI enable_navigation:=$ENABLE_NAV scene_seed:=$SEED planner:=$PLANNER auto_goal:=false &"
     dry_echo "sleep $WARMUP_SEC  # warmup"
     if [[ "$METHOD" == "fapp" ]]; then
       dry_echo "sleep 3  # fapp extra delay (perception init)"
@@ -248,7 +253,15 @@ for ((i=1; i<=LOOP_END; i++)); do
         ;;
     esac
     dry_echo "rosbag record -O $RUN_DIR/raw.bag $TOPICS &"
-    dry_echo "sleep $DURATION"
+    dry_echo "wait (max 10s) for $RUN_DIR/raw.bag.active (or raw.bag) to appear, then sleep 1  # recording active"
+    if [[ "$ENABLE_NAV" == "true" ]]; then
+      dry_echo "rosrun sup_exp goal_publisher.py _delay:=0.5 &  # goal published only after recording started"
+      dry_echo "wait (max 15s) for first msg on /move_base_simple/goal  # goal published"
+    fi
+    dry_echo "sleep $DURATION  # counted from goal publication"
+    if [[ "$ENABLE_NAV" == "true" ]]; then
+      dry_echo "kill -INT \$GOAL_PID; wait"
+    fi
     dry_echo "kill -INT \$BAG_PID; wait; kill -INT \$LAUNCH_PID; wait"
     if [[ "$NO_PROCESS" -eq 0 ]]; then
       dry_echo "bash $PROCESS_BAG $RUN_DIR"
@@ -284,14 +297,15 @@ for ((i=1; i<=LOOP_END; i++)); do
     gui:="$GUI" \
     enable_navigation:="$ENABLE_NAV" \
     scene_seed:="$SEED" \
-    planner:="$PLANNER" &
+    planner:="$PLANNER" \
+    auto_goal:=false &
   LAUNCH_PID=$!
 
   log "warmup ${WARMUP_SEC}s"
   sleep "$WARMUP_SEC"
 
   # FAPP extra delay: pointcloud_generator + mot_mapping need extra time to
-  # initialize before goal_publisher fires, otherwise the robot moves before
+  # initialize before the goal is published, otherwise the robot moves before
   # the perception pipeline is producing /states output.
   if [[ "$METHOD" == "fapp" ]]; then
     log "fapp extra delay 3s (perception init)"
@@ -332,8 +346,45 @@ for ((i=1; i<=LOOP_END; i++)); do
   rosbag record -O "$RUN_DIR/raw.bag" $TOPICS &
   BAG_PID=$!
 
-  log "recording for ${DURATION}s"
+  # Wait until the bag file exists (rosbag writes raw.bag.active while
+  # recording) so the goal is published only once recording is live.
+  BAG_WAIT=0
+  until [[ -e "$RUN_DIR/raw.bag.active" || -e "$RUN_DIR/raw.bag" ]]; do
+    if ! kill -0 "$BAG_PID" 2>/dev/null; then
+      log "WARNING: rosbag record exited before creating the bag"
+      break
+    fi
+    if (( BAG_WAIT >= 20 )); then
+      log "WARNING: bag file did not appear within 10s; proceeding"
+      break
+    fi
+    sleep 0.5
+    BAG_WAIT=$((BAG_WAIT + 1))
+  done
+  sleep 1  # let rosbag finish subscribing to its topics
+
+  # Goal publisher: started by the harness (launch has auto_goal:=false) so
+  # that the robot starts moving only after recording has begun. The yaml
+  # (goal_pose) was loaded globally by the launch; delay is a private param.
+  if [[ "$ENABLE_NAV" == "true" ]]; then
+    log "starting goal_publisher (bag is recording)"
+    rosrun sup_exp goal_publisher.py _delay:=0.5 &
+    GOAL_PID=$!
+    # The goal is latched, so this returns as soon as it has been published.
+    if ! timeout 15 rostopic echo -n 1 /move_base_simple/goal >/dev/null 2>&1; then
+      log "WARNING: no goal observed on /move_base_simple/goal within 15s"
+    fi
+  fi
+
+  log "recording for ${DURATION}s (counted from goal publication)"
   sleep "$DURATION"
+
+  if [[ -n "$GOAL_PID" ]]; then
+    log "stopping goal_publisher (pid=$GOAL_PID)"
+    kill -INT "$GOAL_PID" 2>/dev/null || true
+    wait "$GOAL_PID" 2>/dev/null || true
+    GOAL_PID=""
+  fi
 
   log "stopping rosbag (pid=$BAG_PID)"
   kill -INT "$BAG_PID" 2>/dev/null || true

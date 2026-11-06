@@ -20,6 +20,11 @@
   <arg name="scene_seed" default="-1"/>
   <!-- MPC config the solver was built with: lmpcc_goal | lmpcc | tmpc (see docker/select_planner.sh) -->
   <arg name="planner" default="lmpcc_goal"/>
+  <!-- true (default): goal_publisher is started here, 5 s after launch.
+       false: no goal is published by this launch; the caller (run_avoidance_exp.sh)
+       starts `rosrun sup_exp goal_publisher.py` itself once rosbag is recording,
+       so the bag captures the start of motion. -->
+  <arg name="auto_goal" default="true"/>
 
   <!-- 1. Scene config. The yaml's top-level is already `scene:` (and
        `runner:`), so we load it without a namespace; this produces
@@ -116,8 +121,9 @@
 
   <!-- 8. Goal publisher (reads /scene/goal_pose from the loaded yaml and
        publishes one latched PoseStamped on /move_base_simple/goal).
-       Disabled when enable_navigation=false (perception-only mode). -->
-  <group if="$(arg enable_navigation)">
+       Disabled when enable_navigation=false (perception-only mode) or
+       auto_goal=false (caller publishes the goal itself). -->
+  <group if="$(eval arg('enable_navigation') and arg('auto_goal'))">
     <node pkg="sup_exp" type="goal_publisher.py" name="goal_publisher" output="screen">
       <param name="delay" value="5.0"/>
     </node>
