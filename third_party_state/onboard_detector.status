@@ -1,0 +1,5 @@
+ M cfg/detector_param.yaml
+ M include/onboard_detector/dynamicDetector.cpp
+ M include/onboard_detector/dynamicDetector.h
+ M include/onboard_detector/uvDetector.cpp
+ M launch/run_detector.launch

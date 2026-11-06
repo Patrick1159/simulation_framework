@@ -1,0 +1,177 @@
+<?xml version="1.0"?>
+<!--
+  issue1_static_obstacle.launch
+
+  Controlled diagnostic for Issue 1:
+    "Does /rematch/tracker_details already drift in odom when the robot moves?"
+
+  The obstacle is static in world/odom. The robot may remain static or move in a
+  straight line. Two measurement modes are supported:
+
+    measurement_mode:=real_umap
+      Use Gazebo RGB-D -> umap_extract -> coarse_match -> detailed_match
+
+    measurement_mode:=perfect
+      Use TF-projected perfect camera measurements -> coarse_match -> detailed_match
+
+  Outputs for offline analysis:
+    /obstacles               GT in world/odom
+    /gt_obstacles_camera     GT transformed to camera frame
+    /gt_obstacles_base       GT transformed to base_link
+    /umap/3D_bounding_boxes  camera-frame measurement
+    /tracker/dynamic_obstacles
+    /rematch/tracker_details
+    /tracker_details_base
+    /odom
+-->
+<launch>
+  <arg name="measurement_mode"   default="real_umap"/>
+  <!-- motion_mode:
+       - none:        keep robot stationary
+       - straight:    legacy open-loop cmd_vel
+       - preset_goal: repo-standard goal publisher + MPC tracking -->
+  <arg name="motion_mode"        default="preset_goal"/>
+  <arg name="robot_speed"        default="0.4"/>
+  <arg name="robot_duration"     default="8.0"/>
+  <!-- Gazebo TB3 spawns with yaw=+pi/2, so "in front of the robot" is
+       approximately +y in odom/world, not +x. Keep the default obstacle
+       directly ahead so base_link.x is the informative axis downstream. -->
+  <arg name="obstacle_x"         default="0.0"/>
+  <arg name="obstacle_y"         default="2.0"/>
+  <arg name="obstacle_z"         default="0.5"/>
+  <arg name="obstacle_radius"    default="0.2"/>
+  <arg name="obstacle_height"    default="1.0"/>
+  <arg name="stamp_offset"       default="0.0"/>
+  <arg name="use_camera_pose_tf" default="false"/>
+  <arg name="min_obstacle_z"     default="-999.0"/>
+  <arg name="goal_x"             default="0.0"/>
+  <arg name="goal_y"             default="1.0"/>
+  <arg name="goal_yaw"           default="1.5708"/>
+
+  <rosparam command="load" file="$(find umap)/config/simulation.yaml"/>
+  <param name="rematch_node/SIMILARITY_WEIGHT" value="0.0"/>
+  <param name="rematch_node/SIMILARITY_THRESHOLD" value="-1.0"/>
+  <param name="tracker_node/MIN_OBSTACLE_Z" value="$(arg min_obstacle_z)"/>
+
+  <!-- 1. Gazebo + robot -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+
+  <!-- 2. Static TF: world -> map -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+        args="0 0 0 0 0 0 world map"/>
+
+  <!-- 3. Optional camera pose topic helper -->
+  <group if="$(arg use_camera_pose_tf)">
+    <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose"
+          output="screen">
+      <param name="parent_frame_id" value="odom"/>
+      <param name="child_frame_id" value="d435_color_optical_frame"/>
+    </node>
+  </group>
+
+  <!-- 4A. Stationary control: intentionally launch nothing -->
+  <group if="$(eval arg('motion_mode') == 'none')">
+  </group>
+
+  <!-- 4B. Legacy open-loop motion (kept for quick checks only) -->
+  <group if="$(eval arg('motion_mode') == 'straight')">
+    <node pkg="mpc_nav" type="robot_straight_line.py" name="robot_motion"
+          output="screen">
+      <param name="speed" value="$(arg robot_speed)"/>
+      <param name="duration" value="$(arg robot_duration)"/>
+    </node>
+  </group>
+
+  <!-- 4C. Preset goal-following motion.
+       Uses the repo's existing goal_publisher + mpc_node path instead of a
+       raw cmd_vel script. The goal is intentionally closer than the obstacle
+       default so the robot approaches but does not pass it, keeping the
+       target in FOV longer. Obstacles are not fed back into the controller;
+       motion should stay close to the preset path. -->
+  <group if="$(eval arg('motion_mode') == 'preset_goal')">
+    <node pkg="mpc_nav" type="mpc_node.py" name="issue1_motion_controller"
+          output="screen">
+      <rosparam command="load" file="$(find mpc_nav)/config/mpc.yaml" />
+      <param name="cmd_vel_topic" value="/cmd_vel" />
+      <param name="obstacles_topic" value="/issue1/unused_obstacles" />
+    </node>
+
+    <node pkg="sup_exp" type="goal_publisher.py" name="issue1_goal_publisher"
+          output="screen">
+      <param name="delay" value="2.0"/>
+      <param name="x" value="$(arg goal_x)"/>
+      <param name="y" value="$(arg goal_y)"/>
+      <param name="yaw" value="$(arg goal_yaw)"/>
+      <param name="frame_id" value="odom"/>
+    </node>
+  </group>
+
+  <!-- 5A. Real UMAP measurement path -->
+  <group if="$(eval arg('measurement_mode') == 'real_umap')">
+    <node pkg="sup_exp" type="single_static_obstacle.py" name="static_obs"
+          output="screen">
+      <param name="x" value="$(arg obstacle_x)"/>
+      <param name="y" value="$(arg obstacle_y)"/>
+      <param name="z" value="$(arg obstacle_z)"/>
+      <param name="radius" value="$(arg obstacle_radius)"/>
+      <param name="height" value="$(arg obstacle_height)"/>
+      <param name="rate" value="15"/>
+    </node>
+
+    <node pkg="umap" type="umap_extract" name="umap_node" output="screen">
+      <remap from="/camera/aligned_depth_to_color/image_raw"
+             to="/d435/depth/image_raw"/>
+      <remap from="/camera/color/image_raw" to="/d435/image_raw"/>
+    </node>
+  </group>
+
+  <!-- 5B. Perfect measurement control path -->
+  <group if="$(eval arg('measurement_mode') == 'perfect')">
+    <node pkg="sup_exp" type="perfect_measurement.py" name="perfect_meas"
+          output="screen">
+      <param name="obstacle_x" value="$(arg obstacle_x)"/>
+      <param name="obstacle_y" value="$(arg obstacle_y)"/>
+      <param name="obstacle_z" value="$(arg obstacle_z)"/>
+      <param name="stamp_offset" value="$(arg stamp_offset)"/>
+      <param name="rate" value="15"/>
+    </node>
+  </group>
+
+  <!-- 6. Shared tracking path -->
+  <node pkg="umap" type="coarse_match" name="coarse_match_tracker"
+        output="screen"/>
+
+  <node pkg="sup_exp" type="relay_with_features.py" name="coarse_to_model"
+        output="screen"/>
+
+  <node pkg="umap" type="detailed_match" name="detailed_match_tracker"
+        output="screen"/>
+
+  <!-- 7. Frame bridges -->
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_gt_camera"
+        output="screen">
+    <param name="input_topic" value="/obstacles"/>
+    <param name="output_topic" value="/gt_obstacles_camera"/>
+    <param name="target_frame" value="d435_color_optical_frame"/>
+    <param name="msg_type" value="ObstacleArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_gt_base"
+        output="screen">
+    <param name="input_topic" value="/obstacles"/>
+    <param name="output_topic" value="/gt_obstacles_base"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="msg_type" value="ObstacleArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_tracker_base"
+        output="screen">
+    <param name="input_topic" value="/rematch/tracker_details"/>
+    <param name="output_topic" value="/tracker_details_base"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="msg_type" value="TrackerDetailArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+</launch>

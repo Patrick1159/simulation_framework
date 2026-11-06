@@ -327,6 +327,28 @@ class CrossingObstacleScene:
         _default_stagger = math.sqrt(2.0) * self.x_offset / self.speed + 2.0
         self.stagger_delay = float(rospy.get_param("~stagger_delay", _default_stagger))
 
+        # ── 每-trial 随机化 (用于 N≥20 批量实验) ───────────────────────────────
+        # random_seed >= 0 时，按种子扰动每个障碍物的速度与交叉时机，使每个
+        # trial 成为不同的交叉相遇；几何 (x_offset/y_start) 保持固定。
+        # random_seed < 0 时行为与改动前完全一致（确定性场景）。
+        # 注意：默认 id_mode=stable + pos_noise_std=0 时，主循环不消耗 random
+        # 流，故同一种子结果可复现。
+        self.random_seed = int(rospy.get_param("~random_seed", -1))
+        speed_min = float(rospy.get_param("~speed_min", 0.4))
+        speed_max = float(rospy.get_param("~speed_max", 0.7))
+        stagger_min = float(rospy.get_param("~stagger_min", 1.0))
+        stagger_max = float(rospy.get_param("~stagger_max", 4.0))
+        phase_jitter_max = float(rospy.get_param("~phase_jitter_max", 2.0))
+
+        self.speed_a = self.speed
+        self.speed_b = self.speed
+        if self.random_seed >= 0:
+            random.seed(self.random_seed)
+            self.speed_a = random.uniform(speed_min, speed_max)
+            self.speed_b = random.uniform(speed_min, speed_max)
+            self.stagger_delay = random.uniform(stagger_min, stagger_max)
+            self.start_delay += random.uniform(0.0, phase_jitter_max)
+
         # ── Layer 1: ID 跳变器 ────────────────────────────────────────────────
         _N_OBS = 2
         self.id_jitter = IdJitter(
@@ -357,6 +379,7 @@ class CrossingObstacleScene:
                 "x0":  -self.x_offset,
                 "y0":   self.y_start,
                 "yaw":  self._YAW_RIGHT_BACK,
+                "speed": self.speed_a,
                 "material": "Gazebo/Blue",
                 "label": "A (left-front → right-back)",
             },
@@ -366,6 +389,7 @@ class CrossingObstacleScene:
                 "x0":   self.x_offset,
                 "y0":   self.y_start,
                 "yaw":  self._YAW_LEFT_BACK,
+                "speed": self.speed_b,
                 "material": "Gazebo/Yellow",
                 "label": "B (right-front → left-back)",
             },
@@ -388,14 +412,14 @@ class CrossingObstacleScene:
         rospy.loginfo(
             "[sim_exp_1] Scene initialised.\n"
             "  Obs A: (%.2f, %.2f) → right-back | Obs B: (%.2f, %.2f) → left-back\n"
-            "  Speed: %.2f m/s | Crossing ≈ (0.00, %.2f) at t≈%.1f s\n"
-            "  Stagger delay: %.1f s\n"
+            "  seed=%d | speed_A=%.2f speed_B=%.2f m/s | Crossing ≈ (0.00, %.2f) at t≈%.1f s\n"
+            "  Stagger delay: %.1f s | start_delay: %.1f s\n"
             "  ID jitter:  %s\n"
             "  Obs layer:  %s",
             -self.x_offset, self.y_start,
              self.x_offset, self.y_start,
-            self.speed, y_cross, t_cross,
-            self.stagger_delay,
+            self.random_seed, self.speed_a, self.speed_b, y_cross, t_cross,
+            self.stagger_delay, self.start_delay,
             self.id_jitter.summary(),
             self.track_estimator.summary(),
         )
@@ -406,14 +430,15 @@ class CrossingObstacleScene:
 
     def _make_state(self, cfg: dict, move_time=None) -> dict:
         yaw = cfg["yaw"]
+        spd = cfg.get("speed", self.speed)
         return {
             "name":      cfg["name"],
             "id":        cfg["id"],
             "x":         cfg["x0"],
             "y":         cfg["y0"],
             "yaw":       yaw,
-            "vx":        self.speed * math.cos(yaw),
-            "vy":        self.speed * math.sin(yaw),
+            "vx":        spd * math.cos(yaw),
+            "vy":        spd * math.sin(yaw),
             "move_time": move_time if move_time is not None else rospy.Time(0),
         }
 

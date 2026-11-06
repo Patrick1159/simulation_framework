@@ -1,0 +1,31 @@
+scene:
+  variant: pair_crossing         # default; can be overridden by --subscene on CLI
+  dynamic_scene_id: 2            # maps to my_tb3_description/launch/dync_obs.launch scene:= arg
+  pedestrians:
+    count: 2
+    speed: 1.0                   # m/s (informational; actual values set inside dync_obs)
+    spawn_radius: 4.0
+  start_pose: {x: 0.0, y: 0.0, yaw: 0.0}
+  goal_pose:  {x: 0.0, y: 8.0, yaw: 1.5708}   # +y direction; yaw matches robot's initial heading to avoid sin^2(yaw_err) ambiguity in mpc_solver
+runner:
+  default_duration: 60           # seconds; rosbag length
+  warmup_sec: 5.0                # wait this long after launch before starting rosbag
+  free_disk_min_gb: 5
+  rosbag_topics:
+    - /odom
+    - /obstacles
+    - /rematch/tracker_details
+    - /tracker/dynamic_obstacles
+    - /onboard_detector/dynamic_bboxes
+    - /onboard_detector/tracked_bboxes
+    - /states
+    - /doa_obstacles
+    - /doa_obstacles_tmpc
+    - /cmd_vel
+    - /mpc/pred_path
+    - /mpc/status
+    - /rematch_statistics_sam
+    - /rematch_statistics_clip
+    - /rematch_statistics_aggregator
+    - /tf
+    - /tf_static

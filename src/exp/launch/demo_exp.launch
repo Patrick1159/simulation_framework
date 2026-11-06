@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<!--
+  demo_exp.launch
+  ===============
+  Demo/occlusion variant of avoidance_exp.launch.
+  - Default config: demo_occlusion.yaml
+  - Default dynamic_scene: 4 (dual sine-wave pedestrians)
+  - MPC `/cmd_vel` is remapped to `/mpc/cmd_vel_raw`; a cmd_vel_gate node
+    decides whether to forward it to the real `/cmd_vel`.
+-->
+<launch>
+  <arg name="method" default="ours_full"/>
+  <arg name="dynamic_scene" default="4"/>
+  <arg name="config_file" default="$(find sup_exp)/configs/demo_occlusion.yaml"/>
+  <arg name="use_rviz" default="false"/>
+  <arg name="gui" default="true"/>
+  <arg name="apply_cmd_vel" default="true"/>
+
+  <!-- 1. Scene config. The yaml's top-level is already `scene:` (and
+       `runner:`), so we load it without a namespace; this produces
+       /scene/goal_pose/x etc. (NOT /scene/scene/...). -->
+  <rosparam command="load" file="$(arg config_file)"/>
+
+  <!-- 2. Gazebo + TB3 -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+
+  <!-- 3. Dynamic obstacle scene -->
+  <include file="$(find my_tb3_description)/launch/dync_obs.launch">
+    <arg name="scene" value="$(arg dynamic_scene)"/>
+  </include>
+
+  <!-- 4. Perception dispatcher (publishes /doa_obstacles) -->
+  <include file="$(find sup_exp)/launch/perception_dispatch.launch">
+    <arg name="method" value="$(arg method)"/>
+    <arg name="dynamic_scene" value="$(arg dynamic_scene)"/>
+  </include>
+
+  <!-- 5. MPC navigation — cmd_vel re-routed through gate -->
+  <node pkg="mpc_nav" type="mpc_node.py" name="mpc_node" output="screen">
+    <remap from="/cmd_vel" to="/mpc/cmd_vel_raw"/>
+    <rosparam command="load" file="$(find mpc_nav)/config/mpc.yaml"/>
+    <param name="obstacles_topic" value="/doa_obstacles"/>
+  </node>
+
+  <!-- 6. cmd_vel gate -->
+  <node pkg="sup_exp" type="cmd_vel_gate.py" name="cmd_vel_gate" output="screen">
+    <param name="apply" value="$(arg apply_cmd_vel)"/>
+    <param name="zero_when_blocked" value="true"/>
+  </node>
+
+  <!-- 7. Goal publisher (reads /scene/goal_pose; publishes latched
+       PoseStamped on /move_base_simple/goal). -->
+  <node pkg="sup_exp" type="goal_publisher.py" name="goal_publisher" output="screen">
+    <param name="delay" value="3.0"/>
+  </node>
+
+  <!-- 8. RViz (optional) -->
+  <group if="$(arg use_rviz)">
+    <node pkg="rviz" type="rviz" name="rviz"/>
+  </group>
+</launch>

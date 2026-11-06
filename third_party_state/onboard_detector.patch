@@ -1,0 +1,218 @@
+diff --git a/cfg/detector_param.yaml b/cfg/detector_param.yaml
+index 8efc900..191fff4 100644
+--- a/cfg/detector_param.yaml
++++ b/cfg/detector_param.yaml
+@@ -1,19 +1,22 @@
+-localization_mode: 0 # 0: pose (default) 1: odom
++localization_mode: 1 # 0: pose (default) 1: odom
+ 
+-depth_image_topic: /camera/depth/image_rect_raw
+-aligned_depth_image_topic: /camera/aligned_depth_to_color/image_raw
++depth_image_topic: /d435/depth/image_raw
++aligned_depth_image_topic: /d435/depth/image_raw
+ pose_topic: /mavros/local_position/pose
+-odom_topic: /mavros/local_position/odom
++odom_topic: /odom
+ 
+ 
+ # Camera Parameters
+-depth_intrinsics: [387.1536560058594, 387.1536560058594, 321.3246154785156, 233.5471954345703] # fx,  fy, cx, cy realsense
+-color_intrinsics: [604.404296875, 604.404296875, 325.03704833984375, 245.77059936523438] # intel realsense
++# Gazebo simulation: horizontal_fov=1.047rad, 640x480
++# fx = fy = (640/2) / tan(1.047/2) = 320 / tan(0.5235) = 554.26
++# cx = 320.0, cy = 240.0  (principal point at image centre)
++depth_intrinsics: [554.26, 554.26, 320.0, 240.0] # fx, fy, cx, cy — Gazebo sim values
++color_intrinsics: [554.26, 554.26, 320.0, 240.0] # same sensor in Gazebo (monocular depth plugin)
+ depth_scale_factor: 1000 # 1000 for Intel Realsense Camera
+ depth_min_value: 0.5
+-depth_max_value: 5.0
++depth_max_value: 8.0
+ depth_filter_margin: 10 # filter
+-depth_skip_pixel: 2  # filter
++depth_skip_pixel: 1  # filter
+ image_cols: 640
+ image_rows: 480
+ body_to_camera: [0.0,  0.0,  1.0,  0.065,
+@@ -26,18 +29,18 @@ body_to_camera_color: [0.0,  0.0,  1.0,  0.065,
+                        0.0,  0.0,  0.0,  1.0]
+ 
+ # Raycasting (max depth)
+-raycast_max_length: 5.0
++raycast_max_length: 8.0
+ 
+ # time difference
+ time_difference: 0.033
+ 
+ # sensor data processing
+-voxel_occupied_thresh: 15 # min num of points for a voxel to be occupied in voxel filter
++voxel_occupied_thresh: 2 # min num of points for a voxel to be occupied in voxel filter
+ 
+ # dbscan
+ ground_height: 0.2  # height of ground to remove ground points
+-dbscan_min_points_cluster: 10 # 20: 4.0m range; 30: 3.5m range 40: 3.0m range
+-dbscan_search_range_epsilon: 0.1 # searching range radius
++dbscan_min_points_cluster: 2 # 20: 4.0m range; 30: 3.5m range 40: 3.0m range
++dbscan_search_range_epsilon: 0.2 # searching range radius
+ 
+ # bounding box filtering
+ filtering_BBox_IOU_threshold: 0.05
+@@ -60,14 +63,15 @@ e_r_acc: 0.6
+ kalman_filter_averaging_frames: 10
+ 
+ # classification
+-frame_skip: 5 # num of frames skiped when comparing 2 point clouds
+-dynamic_velocity_threshold: 0.15
+-dynamic_voting_threshold: 0.8
++frame_skip: 8 # num of frames skiped when comparing 2 point clouds
++dynamic_velocity_threshold: 0.10
++dynamic_voting_threshold: 0.5
+ maximum_skip_ratio: 0.5 # the upper limit of points that are skipped(out of previous FOV) to be classfified as dynamic
+ frames_force_dynamic: 10 # Range of searching dynamic obstacles in box history
+ frames_force_dynamic_check_range: 30 # threshold for forcing dynamic obstacles
+ dynamic_consistency_threshold: 1 # obstacles being voted as dynamic for continuous k frames are eligible to be classified as dynamic
+ 
+-# constrain size
+-constrain_size: true
+-target_object_size: [0.5, 0.5, 1.7]
+\ No newline at end of file
++# constrain size: match Gazebo cylinder obstacles (radius=0.3 → diameter=0.6, height=1.0)
++# tolerance is ±0.5 per axis; keeping this enabled filters spurious large static clusters.
++constrain_size: false
++target_object_size: [0.6, 0.6, 1.0]
+\ No newline at end of file
+diff --git a/include/onboard_detector/dynamicDetector.cpp b/include/onboard_detector/dynamicDetector.cpp
+index ceb230d..1bdec66 100644
+--- a/include/onboard_detector/dynamicDetector.cpp
++++ b/include/onboard_detector/dynamicDetector.cpp
+@@ -863,14 +863,16 @@ namespace onboardDetector{
+         std::vector<onboardDetector::box3D> filteredBBoxesTemp;
+         std::vector<std::vector<Eigen::Vector3d>> filteredPcClustersTemp;
+         std::vector<Eigen::Vector3d> filteredPcClusterCentersTemp;
+-        std::vector<Eigen::Vector3d> filteredPcClusterStdsTemp; 
++        std::vector<Eigen::Vector3d> filteredPcClusterStdsTemp;
++        // Track which DBSCAN clusters were matched by UV
++        std::vector<bool> dbMatched(this->dbBBoxes_.size(), false);
+         // find best IOU match for both uv and dbscan. If they are best for each other, then add to filtered bbox and fuse.
+         for (size_t i=0 ; i<this->uvBBoxes_.size(); ++i){
+             onboardDetector::box3D uvBBox = this->uvBBoxes_[i];
+             double bestIOUForUVBBox, bestIOUForDBBBox;
+             int bestMatchForUVBBox = this->getBestOverlapBBox(uvBBox, this->dbBBoxes_, bestIOUForUVBBox);
+             if (bestMatchForUVBBox == -1) continue; // no match at all
+-            onboardDetector::box3D matchedDBBBox = this->dbBBoxes_[bestMatchForUVBBox]; 
++            onboardDetector::box3D matchedDBBBox = this->dbBBoxes_[bestMatchForUVBBox];
+             std::vector<Eigen::Vector3d> matchedPcCluster = this->pcClusters_[bestMatchForUVBBox];
+             Eigen::Vector3d matchedPcClusterCenter = this->pcClusterCenters_[bestMatchForUVBBox];
+             Eigen::Vector3d matchedPcClusterStd = this->pcClusterStds_[bestMatchForUVBBox];
+@@ -878,8 +880,9 @@ namespace onboardDetector{
+ 
+             // if best match is each other and both the IOU is greater than the threshold
+             if (bestMatchForDBBBox == int(i) and bestIOUForUVBBox > this->boxIOUThresh_ and bestIOUForDBBBox > this->boxIOUThresh_){
++                dbMatched[bestMatchForUVBBox] = true;
+                 onboardDetector::box3D bbox;
+-                
++
+                 // take concervative strategy
+                 double xmax = std::max(uvBBox.x+uvBBox.x_width/2, matchedDBBBox.x+matchedDBBBox.x_width/2);
+                 double xmin = std::min(uvBBox.x-uvBBox.x_width/2, matchedDBBBox.x-matchedDBBBox.x_width/2);
+@@ -897,12 +900,27 @@ namespace onboardDetector{
+                 bbox.Vy = 0;
+ 
+                 filteredBBoxesTemp.push_back(bbox);
+-                filteredPcClustersTemp.push_back(matchedPcCluster);      
++                filteredPcClustersTemp.push_back(matchedPcCluster);
+                 filteredPcClusterCentersTemp.push_back(matchedPcClusterCenter);
+                 filteredPcClusterStdsTemp.push_back(matchedPcClusterStd);
+             }
+         }
+ 
++        // Fallback: forward unmatched DBSCAN clusters directly.
++        // This catches obstacles that UV misses (e.g. at far range where
++        // the U-map threshold starves) but DBSCAN successfully clusters.
++        for (size_t i=0 ; i<this->dbBBoxes_.size(); ++i){
++            if (!dbMatched[i] && this->pcClusters_[i].size() >= 3){
++                onboardDetector::box3D dbBBox = this->dbBBoxes_[i];
++                dbBBox.Vx = 0;
++                dbBBox.Vy = 0;
++                filteredBBoxesTemp.push_back(dbBBox);
++                filteredPcClustersTemp.push_back(this->pcClusters_[i]);
++                filteredPcClusterCentersTemp.push_back(this->pcClusterCenters_[i]);
++                filteredPcClusterStdsTemp.push_back(this->pcClusterStds_[i]);
++            }
++        }
++
+         // yolo bounding box filter
+         if (this->yoloBBoxes_.size() != 0){ // if no detected or not using yolo, this will not triggered
+             std::vector<onboardDetector::box3D> filteredBBoxesTempCopy = filteredBBoxesTemp;
+@@ -1497,6 +1515,9 @@ namespace onboardDetector{
+                 newEstimatedBBox.z_width = currDetectedBBox.z_width;
+                 newEstimatedBBox.is_dynamic = currDetectedBBox.is_dynamic;
+                 newEstimatedBBox.is_human = currDetectedBBox.is_human;
++
++                // propagate persistent track ID from matched track
++                newEstimatedBBox.id = this->boxHist_[bestMatch[i]][0].id;
+             }
+             else{
+                 boxHistTemp.push_back(newSingleBoxHist);
+@@ -1510,7 +1531,10 @@ namespace onboardDetector{
+                 newFilter.setup(states, A, B, H, P, Q, R);
+                 filtersTemp.push_back(newFilter);
+                 newEstimatedBBox = currDetectedBBox;
+-                
++
++                // assign new persistent globally unique track ID
++                newEstimatedBBox.id = ++this->globalTrackID_;
++
+             }
+ 
+             // pop old data if len of hist > size limit
+@@ -1779,9 +1803,10 @@ namespace onboardDetector{
+                 line.points.push_back(verts[vert_idx[i][1]]);
+             }
+             
++            // assign persistent track ID before pushing
++            line.id = static_cast<int>(boxes[i].id);
+             lines.markers.push_back(line);
+-            
+-            line.id++;
++            line.points.clear();
+         }
+         // publish
+         publisher.publish(lines);
+diff --git a/include/onboard_detector/dynamicDetector.h b/include/onboard_detector/dynamicDetector.h
+index f28b642..16cc1b7 100644
+--- a/include/onboard_detector/dynamicDetector.h
++++ b/include/onboard_detector/dynamicDetector.h
+@@ -146,6 +146,7 @@ namespace onboardDetector{
+ 
+         // TRACKING AND ASSOCIATION DATA
+         bool newDetectFlag_;
++        int globalTrackID_ = 0; // persistent globally unique track ID counter
+         std::vector<std::deque<onboardDetector::box3D>> boxHist_; // data association result: history of filtered bounding boxes for each box in current frame
+         std::vector<std::deque<std::vector<Eigen::Vector3d>>> pcHist_; // data association result: history of filtered pc clusteres for each pc cluster in current frame
+         std::deque<Eigen::Vector3d> positionHist_; // current position
+diff --git a/include/onboard_detector/uvDetector.cpp b/include/onboard_detector/uvDetector.cpp
+index 41784ec..89cb856 100644
+--- a/include/onboard_detector/uvDetector.cpp
++++ b/include/onboard_detector/uvDetector.cpp
+@@ -144,7 +144,7 @@ namespace onboardDetector{
+         this->col_scale = 0.5;
+         this->min_dist = 10;
+         this->max_dist = 8000;// unit: m
+-        this->threshold_point = 3;
++        this->threshold_point = 2;
+         this->threshold_line = 2;
+         this->min_length_line = 6;
+         this->show_bounding_box_U = true;
+diff --git a/launch/run_detector.launch b/launch/run_detector.launch
+index 933134c..cf89c18 100644
+--- a/launch/run_detector.launch
++++ b/launch/run_detector.launch
+@@ -1,5 +1,6 @@
+ <launch>
+ 	<rosparam file="$(find onboard_detector)/cfg/detector_param.yaml" ns="/onboard_detector" />
+ 	<node pkg="onboard_detector" type="detector_node" name="detector_node" output="screen" />
+-	<node name="rviz" pkg="rviz" type="rviz" args="-d $(find onboard_detector)/rviz/detector.rviz"/>
++	<!-- rviz node removed to avoid name conflict with top-level avoidance_exp.launch,
++	     which already provides an rviz node controlled by the use_rviz arg -->
+ </launch>
+\ No newline at end of file

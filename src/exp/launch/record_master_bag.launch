@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<!--
+  record_master_bag.launch
+  ========================
+  Minimal recording launcher: Gazebo + TB3 + dynamic obstacles only.
+  No perception pipeline, no MPC navigation.
+  Output: master rosbag with raw sensor data + ground truth for offline
+  perception evaluation at reduced playback speed.
+
+  Usage:
+    roslaunch sup_exp record_master_bag.launch duration:=35
+-->
+<launch>
+  <arg name="dynamic_scene" default="2"/>  <!-- 2 = pair_crossing -->
+  <arg name="duration" default="30"/>
+  <arg name="bag_path" default="/data/rosbags/master_bags/pair_crossing_master.bag"/>
+
+  <!-- 1. Gazebo + TB3 (includes static TF world->odom)
+       NOTE: my_tb3_gazebo.launch does not declare a gui arg, so Gazebo GUI
+       follows the empty_world.launch default (gui:=true). Set via env var
+       GAZEBO_GUI:=0 or modify my_tb3_gazebo.launch for headless operation. -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+
+  <!-- 2. Dynamic obstacles (pair_crossing scene) -->
+  <include file="$(find my_tb3_description)/launch/dync_obs.launch">
+    <arg name="scene" value="$(arg dynamic_scene)"/>
+  </include>
+
+  <!-- 3. Static TF: world -> map (identity, required by many ROS tools) -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+        args="0 0 0 0 0 0 world map"/>
+
+  <!-- 4. Record rosbag (auto-exits after the duration arg, in seconds) -->
+  <node pkg="rosbag" type="record" name="master_recorder"
+        args="record -O $(arg bag_path)
+              /d435/image_raw
+              /d435/depth/image_raw
+              /obstacles
+              /tf
+              /tf_static
+              /odom
+              --duration=$(arg duration)"
+        output="screen"/>
+</launch>

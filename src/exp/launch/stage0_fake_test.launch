@@ -1,0 +1,97 @@
+<?xml version="1.0"?>
+<!--
+  stage0_fake_test.launch — Stage 0: TF-only diagnostic with fake bboxes.
+
+  Bypasses UMAP/depth/SAM/CLIP entirely. A synthetic point at (0,0,0.5)
+  in camera optical frame is published and tracked through coarse→detailed
+  match. If the TF chain is correct, Tracker_base.x should stay ~0.5 m
+  regardless of robot motion.
+
+  Args:
+    robot_speed         straight-line speed m/s (default 0.4)
+    robot_duration      how long the robot drives (default 10.0)
+    fake_x/y/z          synthetic obstacle position in camera frame
+                        (default 0, 0, 0.5 = 0.5 m in front of camera)
+    stamp_offset        artificial timestamp lag in seconds (default 0)
+    use_camera_pose_tf  start camera_pose.py static TF (default true)
+    gui                 show Gazebo GUI (default true)
+    bag_prefix          rosbag prefix (default stage0_run)
+
+  Expected result with correct TF:
+    /tracker_details_base trackers[0].position.x ≈ 0.5 (relative to base_link)
+-->
+<launch>
+  <arg name="robot_speed"        default="0.4"/>
+  <arg name="robot_duration"     default="10.0"/>
+  <arg name="fake_x"             default="0.0"/>
+  <arg name="fake_y"             default="0.0"/>
+  <arg name="fake_z"             default="0.5"/>
+  <arg name="stamp_offset"       default="0.0"/>
+  <arg name="use_camera_pose_tf" default="true"/>
+  <arg name="gui"                default="true"/>
+  <arg name="bag_prefix"         default="stage0_run"/>
+
+  <!-- Load tracker config (coarse + detailed params) -->
+  <rosparam command="load" file="$(find umap)/config/simulation.yaml"/>
+
+  <!-- 1. Gazebo + TB3 -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+
+  <!-- 2. Static TFs: world→odom, world→map -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+        args="0 0 0 0 0 0 world map"/>
+
+  <!-- 3. Camera pose TF (same as perception_dispatch.launch).
+       Toggle off to test whether this static TF is the root cause. -->
+  <group if="$(arg use_camera_pose_tf)">
+    <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose"
+          output="screen">
+      <param name="parent_frame_id" value="odom"/>
+      <param name="child_frame_id" value="d435_color_optical_frame"/>
+    </node>
+  </group>
+
+  <!-- 4. Robot straight-line motion -->
+  <node pkg="mpc_nav" type="robot_straight_line.py" name="robot_motion"
+        output="screen">
+    <param name="speed" value="$(arg robot_speed)"/>
+    <param name="duration" value="$(arg robot_duration)"/>
+  </node>
+
+  <!-- 5. Fake bbox publisher (replaces umap_extract) -->
+  <node pkg="sup_exp" type="fake_bbox_publisher.py" name="fake_bbox"
+        output="screen">
+    <param name="x" value="$(arg fake_x)"/>
+    <param name="y" value="$(arg fake_y)"/>
+    <param name="z" value="$(arg fake_z)"/>
+    <param name="stamp_offset" value="$(arg stamp_offset)"/>
+    <param name="rate" value="15"/>
+  </node>
+
+  <!-- 6. Coarse match (camera→odom via TF) -->
+  <node pkg="umap" type="coarse_match" name="coarse_match_tracker"
+        output="screen"/>
+
+  <!-- 7. Relay with dummy features: coarse output → detailed input
+       (topic_tools relay is insufficient because detailed_match requires
+       features[] entries per box_id; coarse_match doesn't populate them) -->
+  <node pkg="sup_exp" type="relay_with_features.py" name="coarse_to_model"
+        output="screen"/>
+
+  <!-- 8. Detailed match (re-match in odom) -->
+  <node pkg="umap" type="detailed_match" name="detailed_match_tracker"
+        output="screen"/>
+
+  <!-- 9. Frame bridge: Tracker_odom → Tracker_base -->
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_tracker_base"
+        output="screen">
+    <param name="input_topic" value="/rematch/tracker_details"/>
+    <param name="output_topic" value="/tracker_details_base"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="msg_type" value="TrackerDetailArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+
+  <!-- 10. Rosbag record (managed externally by shell script;
+       included here for convenience when launching manually) -->
+</launch>

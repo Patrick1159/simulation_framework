@@ -1,0 +1,118 @@
+<?xml version="1.0"?>
+<!--
+  stage2_real_umap.launch — Stage 2: real simulation depth + UMAP.
+
+  A single static cylinder is placed at (obs_x, obs_y, obs_z) in world/odom.
+  The robot drives toward it while real D435 depth images are processed
+  through UMAP → coarse → detailed match.
+
+  Records: GT_camera, GT_base, UMAP_camera, UMAP_base, Tracker_odom, Tracker_base.
+
+  Args:
+    robot_speed     m/s (default 0.4)
+    robot_duration  seconds (default 8.0)
+    obstacle_x/y/z  cylinder center position in odom (default 0.0, 2.0, 0.5)
+    use_camera_pose_tf  (default false — use URDF chain)
+    gui             Gazebo GUI (default false)
+-->
+<launch>
+  <arg name="robot_speed"        default="0.4"/>
+  <arg name="robot_duration"     default="8.0"/>
+  <arg name="obstacle_x"         default="0.0"/>
+  <arg name="obstacle_y"         default="2.0"/>
+  <arg name="obstacle_z"         default="0.5"/>
+  <arg name="use_camera_pose_tf" default="false"/>
+  <arg name="gui"                default="false"/>
+
+  <!-- Load tracker config, then disable CLIP similarity gate -->
+  <rosparam command="load" file="$(find umap)/config/simulation.yaml"/>
+  <param name="rematch_node/SIMILARITY_THRESHOLD" value="-1.0"/>
+  <param name="rematch_node/SIMILARITY_WEIGHT" value="0.0"/>
+  <!-- Disable ground filter: real UMAP z can end up below 0.1 after TF -->
+  <param name="tracker_node/MIN_OBSTACLE_Z" value="-999.0"/>
+
+  <!-- 1. Gazebo + TB3 -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+
+  <!-- 2. Static TFs -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+        args="0 0 0 0 0 0 world map"/>
+
+  <!-- 3. Camera pose TF (default off) -->
+  <group if="$(arg use_camera_pose_tf)">
+    <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose"
+          output="screen">
+      <param name="parent_frame_id" value="odom"/>
+      <param name="child_frame_id" value="d435_color_optical_frame"/>
+    </node>
+  </group>
+
+  <!-- 4. Single static cylinder + GT publisher -->
+  <node pkg="sup_exp" type="single_static_obstacle.py" name="static_obs"
+        output="screen">
+    <param name="x" value="$(arg obstacle_x)"/>
+    <param name="y" value="$(arg obstacle_y)"/>
+    <param name="z" value="$(arg obstacle_z)"/>
+    <param name="radius" value="0.2"/>
+    <param name="height" value="1.0"/>
+    <param name="rate" value="15"/>
+  </node>
+
+  <!-- 5. Real UMAP extraction from depth -->
+  <node pkg="umap" type="umap_extract" name="umap_node" output="screen">
+    <remap from="/camera/aligned_depth_to_color/image_raw"
+           to="/d435/depth/image_raw"/>
+    <remap from="/camera/color/image_raw" to="/d435/image_raw"/>
+  </node>
+
+  <!-- 6. Coarse match -->
+  <node pkg="umap" type="coarse_match" name="coarse_match_tracker"
+        output="screen"/>
+
+  <!-- 7. Relay with dummy features (bypasses SAM/CLIP) -->
+  <node pkg="sup_exp" type="relay_with_features.py" name="coarse_to_model"
+        output="screen"/>
+
+  <!-- 8. Detailed match -->
+  <node pkg="umap" type="detailed_match" name="detailed_match_tracker"
+        output="screen"/>
+
+  <!-- 9. Frame bridges -->
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_gt_camera"
+        output="screen">
+    <param name="input_topic" value="/obstacles"/>
+    <param name="output_topic" value="/gt_obstacles_camera"/>
+    <param name="target_frame" value="d435_color_optical_frame"/>
+    <param name="msg_type" value="ObstacleArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_gt_base"
+        output="screen">
+    <param name="input_topic" value="/obstacles"/>
+    <param name="output_topic" value="/gt_obstacles_base"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="msg_type" value="ObstacleArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_tracker_base"
+        output="screen">
+    <param name="input_topic" value="/rematch/tracker_details"/>
+    <param name="output_topic" value="/tracker_details_base"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="msg_type" value="TrackerDetailArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+
+  <!-- 10. UMAP camera→base_link bridge -->
+  <node pkg="sup_exp" type="umap_to_base.py" name="umap_to_base"
+        output="screen"/>
+
+  <!-- 11. Robot straight-line motion -->
+  <node pkg="mpc_nav" type="robot_straight_line.py" name="robot_motion"
+        output="screen">
+    <param name="speed" value="$(arg robot_speed)"/>
+    <param name="duration" value="$(arg robot_duration)"/>
+  </node>
+</launch>

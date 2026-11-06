@@ -1,0 +1,25 @@
+scene:
+  variant: pair_crossing
+  dynamic_scene_id: 2
+  start_pose: {x: 0.0, y: 0.0, yaw: 0.0}
+  goal_pose:  {x: 0.0, y: 8.0, yaw: 1.5708}
+runner:
+  default_duration: 60
+  warmup_sec: 3.0
+  free_disk_min_gb: 5
+  rosbag_topics:
+    - /odom
+    - /obstacles
+    - /gt_obstacles_camera
+    - /gt_obstacles_base
+    - /umap/3D_bounding_boxes
+    - /umap/2D_bounding_boxes
+    - /rematch/tracker_details
+    - /tracker/dynamic_obstacles
+    - /tracker_details_base
+    - /doa_obstacles
+    - /doa_obstacles_tmpc
+    - /cmd_vel
+    - /tf
+    - /tf_static
+    - /mpc/status

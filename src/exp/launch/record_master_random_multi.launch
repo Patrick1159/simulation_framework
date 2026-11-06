@@ -1,0 +1,64 @@
+<?xml version="1.0"?>
+<!--
+  record_master_random_multi.launch
+  ==================================
+  Minimal recording launcher: Gazebo + TB3 + random dynamic obstacles (scene=0).
+  No perception pipeline, no MPC navigation.
+  Output: master rosbag with raw sensor data + ground truth for offline
+  perception evaluation at reduced playback speed.
+
+  Scene=0 is special: we bypass dync_obs.launch (whose bounds assume +x facing)
+  and start random_dynamic_obstacle.py directly with rotated bounds so obstacles
+  spawn in the robot's actual FOV (TB3 spawns at yaw=pi/2, facing +y).
+
+  Usage:
+    roslaunch sup_exp record_master_random_multi.launch
+-->
+<launch>
+  <arg name="duration" default="65"/>
+  <arg name="bag_path" default="/data/rosbags/master_bags/random_multi_master.bag"/>
+
+  <!-- 1. Gazebo + TB3 (includes static TF world->odom)
+       NOTE: my_tb3_gazebo.launch does not declare a gui arg, so Gazebo GUI
+       follows the empty_world.launch default (gui:=true). Set via env var
+       GAZEBO_GUI:=0 or modify my_tb3_gazebo.launch for headless operation. -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+
+  <!-- 2. Random dynamic obstacles (scene=0, robot faces +y so bounds rotated).
+       Bypass dync_obs.launch and use random_dynamic_obstacle.py directly. -->
+  <node name="random_dynamic_obstacle"
+        pkg="my_tb3_description" type="random_dynamic_obstacle.py"
+        output="screen">
+    <param name="num_obstacles" value="3"/>
+    <param name="x_min" value="-3.0"/>
+    <param name="x_max" value="3.0"/>
+    <param name="y_min" value="0.5"/>
+    <param name="y_max" value="5.0"/>
+    <param name="v_min" value="0.1"/>
+    <param name="v_max" value="0.6"/>
+    <param name="radius" value="0.3"/>
+    <param name="height" value="1.0"/>
+    <param name="frame_id" value="world"/>
+    <param name="random_seed" value="42"/>
+  </node>
+
+  <!-- 3. Static TF: world -> map (identity, required by many ROS tools) -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+        args="0 0 0 0 0 0 world map"/>
+
+  <!-- 4. Record rosbag (auto-exits after the duration arg, in seconds).
+       Sleep 8s before recording so Gazebo + obstacle node have time to
+       spawn models and begin publishing /obstacles. -->
+  <node pkg="rosbag" type="record" name="master_recorder"
+        launch-prefix="bash -c 'sleep 8; exec $0 $@'"
+        required="true"
+        args="record -O $(arg bag_path)
+              /d435/image_raw
+              /d435/depth/image_raw
+              /obstacles
+              /tf
+              /tf_static
+              /odom
+              --duration=$(arg duration)"
+        output="screen"/>
+</launch>

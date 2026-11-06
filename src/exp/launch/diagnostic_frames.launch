@@ -1,0 +1,126 @@
+<?xml version="1.0"?>
+<!--
+  diagnostic_frames.launch
+  ========================
+  Reproduces the real-world frame instability in simulation by running
+  the full perception + navigation pipeline and simultaneously recording
+  all 6 diagnostic data streams needed by analyze_frame_errors.py.
+
+  Data streams published:
+    GT_camera:   /gt_obstacles_camera    (frame_bridge: world -> d435_color_optical_frame)
+    GT_odom:     /obstacles              (native GT, in world=odom)
+    GT_base:     /gt_obstacles_base      (frame_bridge: world -> base_link)
+    UMAP_camera: /umap/3D_bounding_boxes (native UMAP, d435_color_optical_frame)
+    Tracker_odom:/rematch/tracker_details(native tracker, odom)
+    Tracker_base:/tracker_details_base   (frame_bridge: odom -> base_link)
+
+  Args:
+    enable_navigation:  start MPC planner + goal publisher (default true)
+    dynamic_scene:      obstacle scene ID (default 2 = pair_crossing)
+    gui:                show Gazebo GUI (default true)
+
+  Rosbag recording is managed by run_diagnostic.sh.
+-->
+<launch>
+  <arg name="enable_navigation" default="true"/>
+  <arg name="dynamic_scene"     default="2"/>
+  <arg name="gui"               default="true"/>
+
+  <!-- Scene config: goal pose + scene metadata -->
+  <rosparam command="load" file="$(find sup_exp)/configs/diagnostic.yaml"/>
+
+  <!-- 1. Gazebo + TB3 -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+
+  <!-- 2. Dynamic obstacles (scene 2 = pair crossing by default) -->
+  <group unless="$(eval arg('dynamic_scene') == 0)">
+    <include file="$(find my_tb3_description)/launch/dync_obs.launch">
+      <arg name="scene" value="$(arg dynamic_scene)"/>
+    </include>
+  </group>
+  <group if="$(eval arg('dynamic_scene') == 0)">
+    <node name="random_dynamic_obstacle"
+          pkg="my_tb3_description" type="random_dynamic_obstacle.py"
+          output="screen">
+      <param name="num_obstacles" value="3"/>
+      <param name="x_min" value="-3.0"/>
+      <param name="x_max" value="3.0"/>
+      <param name="y_min" value="0.5"/>
+      <param name="y_max" value="5.0"/>
+      <param name="v_min" value="0.1"/>
+      <param name="v_max" value="0.6"/>
+      <param name="radius" value="0.3"/>
+      <param name="height" value="1.0"/>
+      <param name="random_seed" value="42"/>
+      <param name="frame_id" value="world"/>
+    </node>
+  </group>
+
+  <!-- 3. Perception: full DOA pipeline (ours_full) -->
+  <include file="$(find sup_exp)/launch/perception_dispatch.launch">
+    <arg name="method" value="ours_full"/>
+    <arg name="dynamic_scene" value="$(arg dynamic_scene)"/>
+  </include>
+
+  <!-- 4. Static TF: world -> map (identity, needed by T-MPC) -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+        args="0 0 0 0 0 0 world map"/>
+
+  <!-- 5. Frame bridges: produce GT_camera, GT_base, Tracker_base -->
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_gt_camera" output="screen">
+    <param name="input_topic" value="/obstacles"/>
+    <param name="output_topic" value="/gt_obstacles_camera"/>
+    <param name="target_frame" value="d435_color_optical_frame"/>
+    <param name="msg_type" value="ObstacleArray"/>
+    <param name="drop_on_fail" value="true"/>
+  </node>
+
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_gt_base" output="screen">
+    <param name="input_topic" value="/obstacles"/>
+    <param name="output_topic" value="/gt_obstacles_base"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="msg_type" value="ObstacleArray"/>
+    <param name="drop_on_fail" value="true"/>
+  </node>
+
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_tracker_base" output="screen">
+    <param name="input_topic" value="/rematch/tracker_details"/>
+    <param name="output_topic" value="/tracker_details_base"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="msg_type" value="TrackerDetailArray"/>
+    <param name="drop_on_fail" value="true"/>
+  </node>
+
+  <!-- 6. DOA -> T-MPC adapter -->
+  <group if="$(arg enable_navigation)">
+    <node pkg="mpc_nav" type="doa_to_tmpc.py" name="doa_to_tmpc" output="screen">
+      <param name="target_frame" value="odom"/>
+      <param name="N" value="30"/>
+      <param name="dt" value="0.2"/>
+      <param name="max_age" value="0.2"/>
+      <param name="watchdog_timeout" value="0.01"/>
+    </node>
+  </group>
+
+  <!-- 7. T-MPC planner -->
+  <group if="$(arg enable_navigation)">
+    <node pkg="mpc_planner_jackalsimulator" type="jackalsimulator_planner"
+          name="mpc_planner" output="screen" required="true">
+      <remap from="/input/state" to="/odom"/>
+      <remap from="/input/goal" to="/move_base_simple/goal"/>
+      <remap from="/input/obstacles" to="/doa_obstacles_tmpc"/>
+      <remap from="/output/command" to="/cmd_vel"/>
+    </node>
+  </group>
+
+  <!-- 8. Goal publisher (waits 5s, then publishes latched goal) -->
+  <group if="$(arg enable_navigation)">
+    <node pkg="sup_exp" type="goal_publisher.py" name="goal_publisher" output="screen">
+      <param name="delay" value="5.0"/>
+    </node>
+  </group>
+
+  <!-- Rosbag recording is managed by run_diagnostic.sh (shell-controlled,
+       SIGINT cleanup pattern). The launch file only starts the experiment
+       nodes; the shell starts/stops rosbag for clean bag file flush. -->
+</launch>

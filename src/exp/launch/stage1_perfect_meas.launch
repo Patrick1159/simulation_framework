@@ -1,0 +1,110 @@
+<?xml version="1.0"?>
+<!--
+  stage1_perfect_meas.launch — Stage 1: perfect camera measurement from TF.
+
+  A world-fixed obstacle is placed at (obs_x, obs_y, obs_z) in odom frame.
+  perfect_measurement.py computes its true camera-frame position via TF
+  and publishes it as fake /umap/3D_bounding_boxes — simulating a perfect
+  depth extractor with zero measurement noise.
+
+  If Tracker_odom stays constant at the obstacle position and Tracker_base
+  decreases as the robot approaches, the TF chain is correct.
+
+  Args:
+    robot_speed        m/s (default 0.4)
+    robot_duration     seconds (default 10.0)
+    obstacle_x/y/z     obstacle center position in odom (default 0.0, 2.0, 0.5)
+    stamp_offset       artificial timestamp lag (default 0.0)
+    use_camera_pose_tf start camera_pose.py (default false)
+    gui                show Gazebo GUI (default false)
+-->
+<launch>
+  <arg name="robot_speed"        default="0.4"/>
+  <arg name="robot_duration"     default="10.0"/>
+  <arg name="obstacle_x"         default="0.0"/>
+  <arg name="obstacle_y"         default="2.0"/>
+  <arg name="obstacle_z"         default="0.5"/>
+  <arg name="stamp_offset"       default="0.0"/>
+  <arg name="use_camera_pose_tf" default="false"/>
+  <arg name="gui"                default="false"/>
+
+  <rosparam command="load" file="$(find umap)/config/simulation.yaml"/>
+  <!-- Override: disable CLIP similarity gate since we use dummy features.
+       SIMILARITY_THRESHOLD=-1 means no hard rejection by feature similarity. -->
+  <param name="rematch_node/SIMILARITY_WEIGHT" value="0.0"/>
+  <param name="rematch_node/SIMILARITY_THRESHOLD" value="-1.0"/>
+
+  <!-- 1. Gazebo + TB3 -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+
+  <!-- 2. Static TFs -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+        args="0 0 0 0 0 0 world map"/>
+
+  <!-- 3. Camera pose TF (default: off — use URDF chain) -->
+  <group if="$(arg use_camera_pose_tf)">
+    <node pkg="pointcloud_generator" type="camera_pose.py" name="d435_pose"
+          output="screen">
+      <param name="parent_frame_id" value="odom"/>
+      <param name="child_frame_id" value="d435_color_optical_frame"/>
+    </node>
+  </group>
+
+  <!-- 4. Robot straight-line motion toward the obstacle -->
+  <node pkg="mpc_nav" type="robot_straight_line.py" name="robot_motion"
+        output="screen">
+    <param name="speed" value="$(arg robot_speed)"/>
+    <param name="duration" value="$(arg robot_duration)"/>
+  </node>
+
+  <!-- 5. Perfect measurement: p_cam_gt = T_cam_odom * p_odom_gt
+       Publishes fake /umap/3D_bounding_boxes AND /obstacles GT -->
+  <node pkg="sup_exp" type="perfect_measurement.py" name="perfect_meas"
+        output="screen">
+    <param name="obstacle_x" value="$(arg obstacle_x)"/>
+    <param name="obstacle_y" value="$(arg obstacle_y)"/>
+    <param name="obstacle_z" value="$(arg obstacle_z)"/>
+    <param name="stamp_offset" value="$(arg stamp_offset)"/>
+    <param name="rate" value="15"/>
+  </node>
+
+  <!-- 6. Coarse match (camera→odom via TF) -->
+  <node pkg="umap" type="coarse_match" name="coarse_match_tracker"
+        output="screen"/>
+
+  <!-- 7. Relay with features: coarse → detailed -->
+  <node pkg="sup_exp" type="relay_with_features.py" name="coarse_to_model"
+        output="screen"/>
+
+  <!-- 8. Detailed match -->
+  <node pkg="umap" type="detailed_match" name="detailed_match_tracker"
+        output="screen"/>
+
+  <!-- 9. Frame bridges: GT→camera, GT→base, Tracker→base -->
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_gt_camera"
+        output="screen">
+    <param name="input_topic" value="/obstacles"/>
+    <param name="output_topic" value="/gt_obstacles_camera"/>
+    <param name="target_frame" value="d435_color_optical_frame"/>
+    <param name="msg_type" value="ObstacleArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_gt_base"
+        output="screen">
+    <param name="input_topic" value="/obstacles"/>
+    <param name="output_topic" value="/gt_obstacles_base"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="msg_type" value="ObstacleArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+
+  <node pkg="sup_exp" type="frame_bridge.py" name="bridge_tracker_base"
+        output="screen">
+    <param name="input_topic" value="/rematch/tracker_details"/>
+    <param name="output_topic" value="/tracker_details_base"/>
+    <param name="target_frame" value="base_link"/>
+    <param name="msg_type" value="TrackerDetailArray"/>
+    <param name="drop_on_fail" value="false"/>
+  </node>
+</launch>

@@ -1,6 +1,8 @@
 <launch>
-    <!-- Scene selection: 0=Random, 1=Scene1 -->
-    <arg name="scene" default="0" doc="0: Random dynamic obstacles, 1: Scene1 (corridor with moving obstacles)"/>
+    <!-- Scene selection: 0=Random, 1=Scene1, 2=Crossing, 3=Open field -->
+    <arg name="scene" default="0" doc="0: Random dynamic obstacles, 1: Scene1 (corridor), 2: Crossing, 3: Open field (no walls, constant-velocity)"/>
+    <!-- Per-trial randomization seed for scene 2 (crossing). -1 disables (deterministic). -->
+    <arg name="random_seed" default="-1"/>
 
     <!-- Random dynamic obstacles (scene=0) -->
     <group if="$(eval arg('scene') == 0)">
@@ -58,13 +60,20 @@
     <!-- Obs B: (+x_offset, y_start) → left-back. Paths cross at (0, y_start-x_offset). -->
     <group if="$(eval arg('scene') == 2)">
         <arg name="x_offset"      default="2.0"/>
-        <arg name="y_start"       default="4.0"/>
-        <arg name="speed"         default="0.5"/>
+        <!-- y_start=6 → crossing at (0, y_start-x_offset)=(0,4); speed=0.3 keeps
+             the cylinders descending slowly through the robot's forward FOV so
+             the crossing coincides with the robot's approach (it reaches y≈4 at
+             t≈12 s) and the obstacles linger in view long enough for the
+             depth-only baselines (dodt/fapp) to confirm a track. Previously
+             y_start=4/speed=0.5 crossed at (0,2) too briefly and too early, so
+             the fast robot was already past before the cylinders entered view. -->
+        <arg name="y_start"       default="6.0"/>
+        <arg name="speed"         default="0.3"/>
         <arg name="radius"        default="0.3"/>
         <arg name="height"        default="1.0"/>
-        <arg name="start_delay"   default="3.0"/>
+        <arg name="start_delay"   default="2.0"/>
         <!-- stagger_delay=0 → 脚本自动计算 (sqrt(2)*x_offset/speed + 2 s) -->
-        <arg name="stagger_delay" default="2.5"/>
+        <arg name="stagger_delay" default="3.0"/>
 
         <node name="sim_exp_1_crossing" pkg="my_tb3_description" type="sim_exp_1.py" output="screen">
             <param name="x_offset"      value="$(arg x_offset)"/>
@@ -74,6 +83,69 @@
             <param name="height"        value="$(arg height)"/>
             <param name="start_delay"   value="$(arg start_delay)"/>
             <param name="stagger_delay" value="$(arg stagger_delay)"/>
+            <!-- Per-trial randomization: when random_seed>=0 the scene perturbs
+                 per-obstacle speed and crossing timing so each trial differs. -->
+            <param name="random_seed"   value="$(arg random_seed)"/>
+        </node>
+    </group>
+
+    <!-- Scene3: Open field, no walls — constant-velocity obstacles with diverse -->
+    <!-- directions/speeds, billiard-style reflection off a rectangular boundary. -->
+    <group if="$(eval arg('scene') == 3)">
+        <arg name="xmin"   default="-6.0"/>
+        <arg name="xmax"   default="6.0"/>
+        <arg name="ymin"   default="0.0"/>
+        <arg name="ymax"   default="16.0"/>
+        <arg name="radius" default="0.3"/>
+        <arg name="height" default="1.0"/>
+
+        <node name="open_field_obstacles" pkg="my_tb3_description" type="dync_scene3.py" output="screen">
+            <param name="xmin"   value="$(arg xmin)"/>
+            <param name="xmax"   value="$(arg xmax)"/>
+            <param name="ymin"   value="$(arg ymin)"/>
+            <param name="ymax"   value="$(arg ymax)"/>
+            <param name="radius" value="$(arg radius)"/>
+            <param name="height" value="$(arg height)"/>
+        </node>
+    </group>
+
+    <!-- Scene5: Controlled occlusion / Re-ID (scene=5) -->
+    <!-- Two same-size, differently-colored pedestrians cross in opposite -->
+    <!-- directions at y=y_cross and both pass behind a STATIC occluder box -->
+    <!-- at (occ_x, occ_y). They vanish from the depth FOV together and -->
+    <!-- reappear near each other → identity confusion that appearance cues -->
+    <!-- (FastSAM/CLIP) should resolve. Intended with the robot stationary -->
+    <!-- (enable_navigation:=false). The box is spawned in Gazebo but is NOT -->
+    <!-- published to /obstacles, so GT contains only the two peds (ids 0,1). -->
+    <group if="$(eval arg('scene') == 5)">
+        <arg name="y_cross"       default="3.0"/>
+        <arg name="x_start"       default="-2.0"/>
+        <arg name="x_end"         default="2.0"/>
+        <arg name="speed"         default="0.5"/>
+        <arg name="radius"        default="0.3"/>
+        <arg name="height"        default="1.0"/>
+        <arg name="start_delay"   default="3.0"/>
+        <arg name="occ_x"         default="0.0"/>
+        <arg name="occ_y"         default="1.5"/>
+        <arg name="occ_length"    default="0.6"/>
+        <arg name="occ_thickness" default="0.2"/>
+        <arg name="occ_height"    default="1.6"/>
+
+        <node name="occlusion_crossing" pkg="my_tb3_description" type="occlusion_scene.py" output="screen">
+            <param name="y_cross"       value="$(arg y_cross)"/>
+            <param name="x_start"       value="$(arg x_start)"/>
+            <param name="x_end"         value="$(arg x_end)"/>
+            <param name="speed"         value="$(arg speed)"/>
+            <param name="radius"        value="$(arg radius)"/>
+            <param name="height"        value="$(arg height)"/>
+            <param name="start_delay"   value="$(arg start_delay)"/>
+            <param name="occ_x"         value="$(arg occ_x)"/>
+            <param name="occ_y"         value="$(arg occ_y)"/>
+            <param name="occ_length"    value="$(arg occ_length)"/>
+            <param name="occ_thickness" value="$(arg occ_thickness)"/>
+            <param name="occ_height"    value="$(arg occ_height)"/>
+            <!-- Deterministic scene; random_seed accepted for interface parity. -->
+            <param name="random_seed"   value="$(arg random_seed)"/>
         </node>
     </group>
 </launch>

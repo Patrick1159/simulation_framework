@@ -1,0 +1,15 @@
+runner:
+  warmup_sec: 3.0
+  default_duration: 18
+  rosbag_topics:
+    - /odom
+    - /obstacles
+    - /gt_obstacles_camera
+    - /gt_obstacles_base
+    - /umap/3D_bounding_boxes
+    - /umap/2D_bounding_boxes
+    - /tracker/dynamic_obstacles
+    - /rematch/tracker_details
+    - /tracker_details_base
+    - /tf
+    - /tf_static

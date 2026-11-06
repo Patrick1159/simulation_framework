@@ -260,14 +260,16 @@
     <node name="camera_node" pkg="pointcloud_generator" type="processor" output="screen">
       <rosparam file="$(find pointcloud_generator)/param/sim_param.yaml" command="load"/>
       <param name="/camera/pointcloud_frame_id" value="odom"/>
-      <!-- dynamic_only=false: fapp has no /model_output/obstacles to mask with.
-           static_only=true: removes ground points (z < static_ground_z_max) without
-           needing bbox masks — curr_edge_pts is empty so the dynamic-exclusion
-           branch never fires. This gives mot_mapping a ground-free point cloud
-           while preserving all obstacle points. -->
+      <!-- fapp has no /model_output/obstacles, so masking modes are off
+           (dynamic_only/static_only=false): the processor publishes the full
+           point cloud. But the dense D435 ground plane is ~97% of points (z<0 in
+           odom; obstacles z>0), and mot_mapping — tuned for sparse LiDAR — clusters
+           the floor as a static obstacle. filter_ground=true strips z<0.05 only
+           (no dynamic-region exclusion), leaving obstacle bodies for mot_mapping. -->
       <param name="/pointcloud_generate/dynamic_only" value="false"/>
-      <param name="/pointcloud_generate/static_only" value="true"/>
-      <param name="/pointcloud_generate/static_ground_z_max" value="0.08"/>
+      <param name="/pointcloud_generate/static_only" value="false"/>
+      <param name="/pointcloud_generate/filter_ground" value="true"/>
+      <param name="/pointcloud_generate/static_ground_z_max" value="0.05"/>
       <param name="/pointcloud_generate/camera/view_field" value="4.0"/>
       <param name="/pointcloud_generate/camera/self_filter" value="0.0025"/>
       <param name="/pointcloud_generate/camera/grid_size" value="0.05"/>

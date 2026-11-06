@@ -1,0 +1,115 @@
+diff --git a/src/mot_mapping/launch/sim_mapping.launch b/src/mot_mapping/launch/sim_mapping.launch
+index 2549ff7..7fb23c9 100644
+--- a/src/mot_mapping/launch/sim_mapping.launch
++++ b/src/mot_mapping/launch/sim_mapping.launch
+@@ -1,23 +1,60 @@
+ <launch>
+ 
+-  <!-- <include file="$(find livox_ros_driver2)/launch_ROS1/msg_MID360.launch"/> -->
+-        
++  <!-- sim_mapping.launch — TB3 Gazebo / D435 depth-camera configuration.
++       mot_mapping was designed for LiDAR (Livox MID360). Adaptations for
++       D435 RGB-D point cloud (grid_size=0.05m, ~10 Hz):
++
++       DBSCAN:
++         tolerance  0.4  → cluster connectivity for sparse RGB-D clusters
++         min_cluster  5  → reduced from 15; RGB-D gives fewer pts/obstacle
++                           than dense LiDAR at the same distance
++         core_pts     3  → lower core-point requirement for sparser cloud
++
++       Detection:
++         thresh_dist 0.02 → min ikd-tree distance to classify as dynamic.
++                            Obstacle speed 0.2-0.9 m/s × ~0.05 s frame ≈
++                            0.01-0.045 m per frame; keep 0.02 as lower bound.
++         thresh_var  0.8  → keep relaxed; RGB-D depth noise raises variance.
++
++       Topic remaps: see inline comments below.
++  -->
++
+   <node pkg="mot_mapping" type="mapping_node" name="mapping_node" output="screen">
+-    <param name="dbscan/core_pts" value="3" type="int"/>
+-    <param name="dbscan/tolerance" value="0.4" type="double"/>
+-    <param name="dbscan/min_cluster" value="15" type="int"/>
+-    <param name="dbscan/max_cluster" value="1000" type="int"/>
+-    <param name="detection/thresh_dist" value="0.02" type="double"/>
+-    <param name="detection/thresh_var" value="0.8" type="double"/>
++    <param name="dbscan/core_pts"    value="3"    type="int"/>
++    <!-- tolerance/max_cluster retuned for dense D435 RGB-D (vs sparse Livox LiDAR
++         these were set for). Full RGB-D cloud (~2500 pts/frame incl. ground) at
++         tolerance=0.4 flood-fills into one blob > max_cluster=1000, so every
++         cluster was discarded (Cluster size: 0). Smaller eps fragments the dense
++         scene so a pedestrian forms its own object-scale cluster; larger cap keeps
++         dense clusters instead of dropping them. -->
++    <param name="dbscan/tolerance"   value="0.15"  type="double"/>
++    <!-- min_cluster 5→4: a ground-filtered pedestrian at the far end of the
++         D435 range (~4 m) downsamples to only a handful of voxels; 4 keeps the
++         second/farther ped from being dropped while still rejecting stray noise. -->
++    <param name="dbscan/min_cluster" value="4"    type="int"/>
++    <param name="dbscan/max_cluster" value="50000" type="int"/>
++    <!-- thresh_dist: min avg distance to ikd-tree to classify a cluster as dynamic.
++         Obstacle speed range 0.2–0.9 m/s at 30 Hz → frame displacement 0.007–0.030 m.
++         Previous value 0.02 caused slow obstacles (v<0.6 m/s) to be missed (FN).
++         Lowered to 0.005 to catch all speeds; ikd-tree voxel size is 0.1 m so
++         false-static risk is low. -->
++    <param name="detection/thresh_dist" value="0.005" type="double"/>
++    <!-- thresh_var 1.5→3.0: the normalized neighbor-distance variance of a
++         ground-filtered RGB-D pedestrian blob is high (depth noise + partial
++         overlap with static background at the blob edges). 1.5 rejected many
++         valid ped clusters, leaving only ~8% of frames with a detection and at
++         most one ped at a time. 3.0 admits both peds more consistently; ground
++         is already z-filtered out so false-static risk stays low. -->
++    <param name="detection/thresh_var"  value="3.0"   type="double"/>
+     <param name="lidar/range_x" value="15.0" type="double"/>
+     <param name="lidar/range_y" value="15.0" type="double"/>
+-    <param name="lidar/range_z" value="5.0" type="double"/>
++    <param name="lidar/range_z" value="5.0"  type="double"/>
++
++    <remap from="/map_generator/obj_cloud" to="/RED/pointcloud_process/pointcloud"/>
++    <remap from="/drone_0_visual_slam/odom" to="/odom"/>
+   </node>
+ 
+-  
+-  <!-- <node name="livox_rviz" pkg="rviz" type="rviz" respawn="true" 
++  <!-- <node name="livox_rviz" pkg="rviz" type="rviz" respawn="true"
+         args="-d $(find mot_mapping)/launch/display_point_cloud_ROS1.rviz"/> -->
+-  
+-
+ 
+ </launch>
+diff --git a/src/mot_mapping/src/mapping_manger.cpp b/src/mot_mapping/src/mapping_manger.cpp
+index 67272a0..54cb1ce 100755
+--- a/src/mot_mapping/src/mapping_manger.cpp
++++ b/src/mot_mapping/src/mapping_manger.cpp
+@@ -111,6 +111,16 @@ void MappingRos::cloudOdomCallback(const sensor_msgs::PointCloud2ConstPtr& msg,
+   PointsPtr latest_cloud(new Points);
+   pcl::fromROSMsg(*msg, *latest_cloud);
+ 
++  // Empty input (e.g. RGB-D ground filtered out and no obstacle in view) would
++  // segfault the downstream DBSCAN KdTree build, ikd-tree search and
++  // getMinMax3D, all of which assume a non-empty cloud. Publish empty states so
++  // the bridge knows there are no obstacles, then skip this frame.
++  if (latest_cloud->empty()) {
++    obj_state_msgs::ObjectsStates empty_states;
++    statesPub.publish(empty_states);
++    return;
++  }
++
+   md_->T << odom->pose.pose.position.x,
+             odom->pose.pose.position.y,
+             odom->pose.pose.position.z;
+diff --git a/src/simulation/Utils/rviz_plugins/package.xml b/src/simulation/Utils/rviz_plugins/package.xml
+index af4b617..d5fead1 100755
+--- a/src/simulation/Utils/rviz_plugins/package.xml
++++ b/src/simulation/Utils/rviz_plugins/package.xml
+@@ -16,9 +16,11 @@
+   <build_depend>rviz            </build_depend>
+   <build_depend>roscpp          </build_depend>
+   <build_depend>multi_map_server</build_depend>
++  <build_depend>quadrotor_msgs  </build_depend>
+   <build_depend>qtbase5-dev     </build_depend>
+   <build_depend>message_runtime </build_depend>
+ 
++  <run_depend>quadrotor_msgs  </run_depend>
+   <run_depend>rviz              </run_depend>
+   <run_depend>multi_map_server  </run_depend>
+   <run_depend>message_runtime   </run_depend>

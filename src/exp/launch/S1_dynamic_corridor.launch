@@ -1,0 +1,61 @@
+<launch>
+  <!-- ================================================================= -->
+  <!-- S1_dynamic_corridor.launch — Scene 1 with dual sine-wave pedestrians -->
+  <!-- ================================================================= -->
+  <!-- Launches:                                                         -->
+  <!--   1. Gazebo with S1_static_corridor.world (20m corridor, 2 doors) -->
+  <!--   2. TurtleBot3 burger robot                                      -->
+  <!--   3. Dual pedestrian sine wave scene (scene=4)                    -->
+  <!--                                                                   -->
+  <!-- Recording: use record_S1.sh separately                            -->
+  <!-- ================================================================= -->
+
+  <arg name="world_file"
+       default="$(find sup_exp)/worlds/S1_static_corridor.world"/>
+  <arg name="robot_speed" default="0.4"/>
+  <arg name="scenario_duration" default="20.0"/>
+  <arg name="gui" default="true"/>
+
+  <!-- ── Gazebo with static corridor world ─────────────────────────── -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world_file)"/>
+    <arg name="paused" value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui" value="$(arg gui)"/>
+  </include>
+
+  <!-- ── Robot description ──────────────────────────────────────────── -->
+  <param name="robot_description"
+         command="$(find xacro)/xacro $(find my_tb3_description)/urdf_w_sensor/turtlebot3_burger.urdf.xacro"/>
+
+  <node name="robot_state_publisher" pkg="robot_state_publisher"
+        type="robot_state_publisher" output="screen">
+    <param name="publish_frequency" value="50.0"/>
+  </node>
+
+  <!-- ── Spawn robot at (0, 0, 0.15) facing +x (yaw=0) ─────────────── -->
+  <node name="spawn_urdf" pkg="gazebo_ros" type="spawn_model"
+        args="-urdf -param robot_description -model my_tb3 -x 0 -y 0 -z 0.15 -R 0 -P 0 -Y 0"/>
+
+  <!-- ── Static transform world -> odom ──────────────────────────────── -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_odom"
+        args="0 0 0 0 0 0 world odom"/>
+
+  <!-- ── Pose relay ─────────────────────────────────────────────────── -->
+  <node pkg="my_tb3_description" type="set_pose.py" name="set_pose_node"
+        output="screen"/>
+
+  <!-- ── Robot straight-line motion ─────────────────────────────────── -->
+  <node pkg="mpc_nav" type="robot_straight_line.py" name="robot_motion"
+        output="screen">
+    <param name="speed" value="$(arg robot_speed)"/>
+    <param name="duration" value="$(arg scenario_duration)"/>
+    <param name="cmd_vel_topic" value="/cmd_vel"/>
+  </node>
+
+  <!-- ── Dual pedestrian sine wave (scene=4) ────────────────────────── -->
+  <include file="$(find my_tb3_description)/launch/dync_obs.launch">
+    <arg name="scene" value="4"/>
+  </include>
+
+</launch>

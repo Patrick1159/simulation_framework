@@ -1,0 +1,120 @@
+# Scene 1: Static Office Corridor (20m)
+# Foundation scene for dynamic obstacle experiments.
+
+corridor:
+  length: 20.0
+  width: 2.8
+  wall_height: 2.5
+  wall_thickness: 0.1
+
+walls:
+  left:
+    center_y: -1.45
+    segments:
+      - name: left_wall_front
+        length: 5.0
+        x_span: [0.0, 5.0]
+      - name: left_wall_mid
+        length: 7.4
+        x_span: [6.0, 13.4]
+      - name: left_wall_back
+        length: 5.4
+        x_span: [14.6, 20.0]
+  right:
+    center_y: 1.45
+    continuous: true
+    name: right_wall
+    length: 20.0
+    x_span: [0.0, 20.0]
+
+doorways:
+  - id: 1
+    gap_x: [5.0, 6.0]
+    gap_center: 5.5
+    clear_opening: 1.0
+    left_post_x: 4.95
+    right_post_x: 6.05
+    top_x: 5.5
+    post_size: [0.10, 0.15, 2.2]
+    top_size: [1.2, 0.15, 0.12]
+  - id: 2
+    gap_x: [13.4, 14.6]
+    gap_center: 14.0
+    clear_opening: 1.0
+    left_post_x: 13.45
+    right_post_x: 14.55
+    top_x: 14.0
+    post_size: [0.10, 0.15, 2.2]
+    top_size: [1.2, 0.15, 0.12]
+
+static_objects:
+  - name: trash_bin_01
+    type: cylinder
+    pose: [3.0, 1.1, 0.35]
+    size: {radius: 0.2, height: 0.7}
+    color: dark_green
+    ambient: [0.2, 0.3, 0.2, 1.0]
+    diffuse: [0.2, 0.5, 0.3, 1.0]
+  - name: trash_bin_02
+    type: cylinder
+    pose: [10.0, -1.0, 0.35]
+    size: {radius: 0.2, height: 0.7}
+    color: dark_blue
+    ambient: [0.15, 0.2, 0.35, 1.0]
+    diffuse: [0.2, 0.3, 0.55, 1.0]
+  - name: trash_bin_03
+    type: cylinder
+    pose: [17.5, 1.1, 0.35]
+    size: {radius: 0.2, height: 0.7}
+    color: dark_green
+    ambient: [0.2, 0.3, 0.2, 1.0]
+    diffuse: [0.2, 0.5, 0.3, 1.0]
+  - name: wall_sign_01
+    type: box
+    pose: [1.5, -1.36, 1.4]
+    size: [0.6, 0.03, 0.4]
+    color: white
+    ambient: [0.8, 0.8, 0.8, 1.0]
+    diffuse: [0.9, 0.9, 0.9, 1.0]
+  - name: wall_sign_02
+    type: box
+    pose: [8.0, 1.41, 1.4]
+    size: [0.6, 0.03, 0.4]
+    color: white
+    ambient: [0.8, 0.8, 0.8, 1.0]
+    diffuse: [0.9, 0.9, 0.9, 1.0]
+  - name: wall_sign_03
+    type: box
+    pose: [12.0, -1.36, 1.4]
+    size: [0.6, 0.03, 0.4]
+    color: white
+    ambient: [0.8, 0.8, 0.8, 1.0]
+    diffuse: [0.9, 0.9, 0.9, 1.0]
+  - name: wall_sign_04
+    type: box
+    pose: [18.5, 1.41, 1.4]
+    size: [0.6, 0.03, 0.4]
+    color: white
+    ambient: [0.8, 0.8, 0.8, 1.0]
+    diffuse: [0.9, 0.9, 0.9, 1.0]
+  - name: crate_01
+    type: box
+    pose: [7.0, -0.5, 0.25]
+    size: [0.5, 0.4, 0.5]
+    color: brown
+    ambient: [0.4, 0.3, 0.2, 1.0]
+    diffuse: [0.55, 0.4, 0.25, 1.0]
+  - name: crate_02
+    type: box
+    pose: [15.0, 0.6, 0.25]
+    size: [0.5, 0.4, 0.5]
+    color: brown
+    ambient: [0.4, 0.3, 0.2, 1.0]
+    diffuse: [0.55, 0.4, 0.25, 1.0]
+  - name: barrel_01
+    type: cylinder
+    pose: [13.0, -0.8, 0.4]
+    size: {radius: 0.3, height: 0.8}
+    color: dark_red
+    ambient: [0.4, 0.15, 0.1, 1.0]
+    diffuse: [0.55, 0.2, 0.15, 1.0]

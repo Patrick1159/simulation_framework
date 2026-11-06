@@ -1,0 +1,119 @@
+<?xml version="1.0"?>
+<!--
+  avoidance_exp.launch
+  ====================
+  Top-level launcher for the avoidance experiment:
+  Gazebo + dynamic obstacles + selected perception method + MPC navigation.
+
+  Composition only — does not modify any module's nodes or launch files.
+  NOTE: $(find my_tb3_description)/launch/my_tb3_gazebo.launch does not
+  declare a `gui` arg, so we cannot pass it through as an <arg>; gui is
+  accepted here for forward-compat but currently has no effect.
+-->
+<launch>
+  <arg name="method" default="ours_full"/>
+  <arg name="dynamic_scene" default="2"/>
+  <arg name="config_file" default="$(find sup_exp)/configs/avoidance_crossing.yaml"/>
+  <arg name="use_rviz" default="false"/>
+  <arg name="gui" default="true"/>
+  <arg name="enable_navigation" default="true"/>
+  <!-- Per-trial randomization seed for the crossing scene (scene 2). -1 = deterministic. -->
+  <arg name="scene_seed" default="-1"/>
+
+  <!-- 1. Scene config. The yaml's top-level is already `scene:` (and
+       `runner:`), so we load it without a namespace; this produces
+       /scene/goal_pose/x etc. (NOT /scene/scene/... — that double-wrap
+       silently breaks goal_publisher's rosparam lookup). -->
+  <rosparam command="load" file="$(arg config_file)"/>
+
+  <!-- 2. Gazebo + TB3 -->
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+
+  <!-- 3. Dynamic obstacle scene.
+       Special case: scene=0 (random_multi). dync_obs.launch's bounds
+       (x∈[0.5,5.0], y∈[-3.0,3.0]) assume the robot faces +x, but the
+       TB3 spawns at yaw=π/2 (facing +y). We bypass dync_obs.launch's
+       scene=0 group and start random_dynamic_obstacle.py directly with
+       rotated bounds (x∈[-3.0,3.0], y∈[0.5,5.0]) so obstacles spawn in
+       the robot's actual FOV. All other scenes go through dync_obs.launch
+       as published. -->
+  <group unless="$(eval arg('dynamic_scene') == 0)">
+    <include file="$(find my_tb3_description)/launch/dync_obs.launch">
+      <arg name="scene" value="$(arg dynamic_scene)"/>
+      <arg name="random_seed" value="$(arg scene_seed)"/>
+    </include>
+  </group>
+  <group if="$(eval arg('dynamic_scene') == 0)">
+    <node name="random_dynamic_obstacle"
+          pkg="my_tb3_description" type="random_dynamic_obstacle.py"
+          output="screen">
+      <param name="num_obstacles" value="3"/>
+      <param name="x_min" value="-3.0"/>
+      <param name="x_max" value="3.0"/>
+      <param name="y_min" value="0.5"/>
+      <param name="y_max" value="5.0"/>
+      <param name="v_min" value="0.1"/>
+      <param name="v_max" value="0.6"/>
+      <param name="radius" value="0.3"/>
+      <param name="height" value="1.0"/>
+      <param name="random_seed" value="42"/>
+      <param name="frame_id" value="world"/>
+    </node>
+  </group>
+
+  <!-- 4. Perception dispatcher (publishes /doa_obstacles) -->
+  <include file="$(find sup_exp)/launch/perception_dispatch.launch">
+    <arg name="method" value="$(arg method)"/>
+    <arg name="dynamic_scene" value="$(arg dynamic_scene)"/>
+  </include>
+
+  <!-- 5. Static TF: world -> map (identity).
+       my_tb3_gazebo.launch already publishes world->odom (identity).
+       T-MPC's C++ planner hardcodes frame_id="map" for publishPose() and
+       publishCamera(), so map must exist in the TF tree.
+       Publishing world->map (not map->odom) avoids giving odom two parents,
+       which would create TF tree ambiguity. In simulation world/map/odom are
+       all numerically identical so this is safe. -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="world_to_map"
+        args="0 0 0 0 0 0 world map"/>
+
+  <!-- 6. DOA -> T-MPC adapter: only for ours_* methods.
+       dodt has its own dodt_to_tmpc.py bridge in perception_dispatch.launch.
+       oracle_gt/fapp/stage1_only are not fully supported end-to-end. -->
+  <group if="$(eval arg('method') in ['ours_full','ours_no_clip','ours_no_sam'])">
+    <node pkg="mpc_nav" type="doa_to_tmpc.py" name="doa_to_tmpc" output="screen">
+      <param name="target_frame" value="odom"/>
+      <param name="N" value="30"/>
+      <param name="dt" value="0.2"/>
+      <param name="max_age" value="0.2"/>
+      <param name="watchdog_timeout" value="0.01"/>
+    </node>
+  </group>
+
+  <!-- 7. T-MPC planner (LMPCC: GoalModule + EllipsoidConstraint)
+       Disabled when enable_navigation=false (perception-only mode). -->
+  <group if="$(arg enable_navigation)">
+    <node pkg="mpc_planner_jackalsimulator" type="jackalsimulator_planner"
+          name="mpc_planner" output="screen" required="true">
+      <remap from="/input/state" to="/odom"/>
+      <remap from="/input/goal" to="/move_base_simple/goal"/>
+      <remap from="/input/obstacles" to="/doa_obstacles_tmpc"/>
+      <remap from="/output/command" to="/cmd_vel"/>
+    </node>
+  </group>
+
+  <!-- 8. Goal publisher (reads /scene/goal_pose from the loaded yaml and
+       publishes one latched PoseStamped on /move_base_simple/goal).
+       Disabled when enable_navigation=false (perception-only mode). -->
+  <group if="$(arg enable_navigation)">
+    <node pkg="sup_exp" type="goal_publisher.py" name="goal_publisher" output="screen">
+      <param name="delay" value="5.0"/>
+    </node>
+  </group>
+
+  <!-- 9. RViz (optional) -->
+  <group if="$(arg use_rviz)">
+    <node pkg="rviz" type="rviz" name="rviz"
+          args="-d $(find sup_exp)/rviz/avoidance_exp.rviz"/>
+  </group>
+</launch>

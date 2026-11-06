@@ -26,8 +26,8 @@
     <param name="N" value="30"/>
     <param name="dt" value="0.2"/>
     <param name="max_age" value="0.2"/>
-    <param name="watchdog_timeout" value="0.01"/>
-    <param name="cv_horizon" value="1.0"/>
+    <param name="watchdog_timeout" value="0.5"/>
+    <param name="cv_horizon" value="1.5"/>
     <param name="v_min" value="0.1"/>
     <param name="emit_uncertainty" value="false"/>
     <param name="rate_floor" value="0.05"/>

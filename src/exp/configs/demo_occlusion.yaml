@@ -1,0 +1,34 @@
+scene:
+  variant: occlusion_reid
+  dynamic_scene_id: 4            # dual sine-wave peds used as moving occluders
+  occluder:
+    x: 4.0
+    y: 0.0
+    half_width: 0.4
+  occlusion_window:
+    start: 10.0                  # seconds into the run
+    duration: 2.0                # seconds
+  start_pose: {x: 0.0, y: 0.0, yaw: 0.0}
+  goal_pose:  {x: 0.0, y: 8.0, yaw: 1.5708}   # +y direction; yaw matches robot's initial heading
+runner:
+  default_duration: 35
+  warmup_sec: 5.0
+  free_disk_min_gb: 5
+  apply_cmd_vel: true            # CLI may override
+  rosbag_topics:
+    - /odom
+    - /obstacles
+    - /rematch/tracker_details
+    - /tracker/dynamic_obstacles
+    - /onboard_detector/dynamic_bboxes
+    - /states
+    - /doa_obstacles
+    - /cmd_vel
+    - /mpc/cmd_vel_raw
+    - /mpc/pred_path
+    - /mpc/status
+    - /rematch_statistics_sam
+    - /rematch_statistics_clip
+    - /rematch_statistics_aggregator
+    - /tf
+    - /tf_static
