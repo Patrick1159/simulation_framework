@@ -6,6 +6,7 @@
 #include <mpc_planner_types/realtime_data.h>
 
 #include <mpc_planner_msgs/ObstacleArray.h>
+#include <mpc_nav/MPCStatus.h>
 
 #include <ros_tools/profiling.h>
 
@@ -75,6 +76,7 @@ private:
     ros::Subscriber _obstacle_sub, _obstacle_sim_sub;
 
     ros::Publisher _cmd_pub;
+    ros::Publisher _status_pub; /// per-solve status on /mpc/status (mpc_nav/MPCStatus)
     ros::Publisher _pose_pub;
 
     tf2_ros::TransformBroadcaster _camera_pub;

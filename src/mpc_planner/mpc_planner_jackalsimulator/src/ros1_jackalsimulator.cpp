@@ -15,6 +15,9 @@
 
 #include <ros_tools/profiling.h>
 
+#include <chrono>
+#include <limits>
+
 using namespace MPCPlanner;
 
 JackalPlanner::JackalPlanner(ros::NodeHandle &nh)
@@ -85,6 +88,9 @@ void JackalPlanner::initializeSubscribersAndPublishers(ros::NodeHandle &nh)
     _pose_pub = nh.advertise<geometry_msgs::PoseStamped>(
         "/output/pose", 1);
 
+    // Absolute topic: consumed by exp/scripts/stats_viz/calc_planning_metrics.py
+    _status_pub = nh.advertise<mpc_nav::MPCStatus>("/mpc/status", 10);
+
 }
 
 void JackalPlanner::startEnvironment()
@@ -134,7 +140,22 @@ void JackalPlanner::loop(const ros::TimerEvent &event)
     auto &loop_benchmarker = BENCHMARKERS.getBenchmarker("loop");
     loop_benchmarker.start();
 
+    const auto solve_t0 = std::chrono::steady_clock::now();
     auto output = _planner->solveMPC(_state, _data); // Main MPC Function
+    const double solve_time_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - solve_t0).count();
+
+    if (_planner->isDataReady()) // skip loops where solveMPC returned before solving (missing goal/obstacles)
+    {
+        mpc_nav::MPCStatus status_msg;
+        status_msg.header.stamp = ros::Time::now();
+        status_msg.header.frame_id = "odom";
+        status_msg.success = output.success;
+        status_msg.solve_time_ms = static_cast<float>(solve_time_ms); // wall clock around solveMPC
+        status_msg.cost = std::numeric_limits<float>::quiet_NaN();    // solver cost not exposed by Planner
+        status_msg.status_text = output.success ? "ok" : "infeasible";
+        _status_pub.publish(status_msg);
+    }
 
     LOG_MARK("Success: " << output.success);
 

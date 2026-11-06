@@ -19,6 +19,7 @@ set(DEPENDENCIES
   mpc_planner_types
   ros_tools
   nav_msgs
+  mpc_nav
   dynamic_reconfigure
   tf2_ros
 )

@@ -18,13 +18,14 @@ import csv
 import json
 import math
 import os
+import re
 from collections import defaultdict
 
-import rosbag
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
+# rosbag / matplotlib / numpy are imported lazily (see main() and
+# plot_corridor_trajectory) so the pure helpers can be imported and unit-tested
+# without ROS installed.
+
+MIN_MOTION_M = 0.5  # a run with less path than this is "static"
 
 
 def stamp_to_sec(msg, bag_time):
@@ -172,7 +173,16 @@ def compute_path_length(odom_rows, end_time=None):
     return total
 
 
-def compute_goal_metrics(odom_rows, goal_x, goal_y, tolerance):
+def compute_goal_metrics(odom_rows, goal_x, goal_y, tolerance,
+                         min_motion=MIN_MOTION_M):
+    """Goal-reach metrics.
+
+    A goal hit only counts if the robot has actually travelled at least
+    `min_motion` metres along its path up to that sample. Previously the first
+    odom sample within `tolerance` of the goal counted, so a robot that never
+    moved (or whose first odom sample was already near the assumed goal)
+    scored goal_success=1 with path_length_m=0.
+    """
     if not odom_rows:
         return {
             "goal_success": 0,
@@ -182,15 +192,21 @@ def compute_goal_metrics(odom_rows, goal_x, goal_y, tolerance):
             "path_length_to_goal_m": float("nan"),
             "min_goal_distance_m": float("nan"),
             "final_goal_distance_m": float("nan"),
+            "start_goal_distance_m": float("nan"),
         }
 
+    start_goal_dist = math.hypot(odom_rows[0]["x"] - goal_x, odom_rows[0]["y"] - goal_y)
     start_t = odom_rows[0]["t"]
     hit = None
     min_dist = float("inf")
+    travelled = 0.0  # running path length up to and including `row`
+    prev = odom_rows[0]
     for row in odom_rows:
+        travelled += math.hypot(row["x"] - prev["x"], row["y"] - prev["y"])
+        prev = row
         dist = math.hypot(row["x"] - goal_x, row["y"] - goal_y)
         min_dist = min(min_dist, dist)
-        if hit is None and dist <= tolerance:
+        if hit is None and dist <= tolerance and travelled >= min_motion:
             hit = row
 
     full_path = compute_path_length(odom_rows)
@@ -205,6 +221,7 @@ def compute_goal_metrics(odom_rows, goal_x, goal_y, tolerance):
             "final_goal_distance_m": math.hypot(
                 odom_rows[-1]["x"] - goal_x, odom_rows[-1]["y"] - goal_y
             ),
+            "start_goal_distance_m": start_goal_dist,
         }
 
     path_to_goal = compute_path_length(odom_rows, end_time=hit["t"])
@@ -218,7 +235,57 @@ def compute_goal_metrics(odom_rows, goal_x, goal_y, tolerance):
         "final_goal_distance_m": math.hypot(
             odom_rows[-1]["x"] - goal_x, odom_rows[-1]["y"] - goal_y
         ),
+        "start_goal_distance_m": start_goal_dist,
     }
+
+
+def infer_method(run_dir):
+    """Method name = parent directory of the run dir (.../<method>/run_<i>/).
+
+    Walks up from `run_dir` to the first component named run_<i> / run<i> and
+    returns its parent. If no such component exists (different layout) the
+    directory name itself is returned.
+    """
+    path = os.path.abspath(run_dir)
+    parts = path.split(os.sep)
+    for i in range(len(parts) - 1, 0, -1):
+        if re.fullmatch(r"run_?\d+", parts[i]):
+            return parts[i - 1]
+    return os.path.basename(path)
+
+
+def compute_validity(metrics, method=None):
+    """Return (valid, reasons) for a metrics dict.
+
+    Reasons: static, no-planner-obs, planner-obs-always-empty, no-rematch
+    (ours_* only), goal-without-motion.
+    """
+    reasons = []
+    path = metrics.get("path_length_m")
+    static = (path is None or not math.isfinite(path)) or path < MIN_MOTION_M
+    if static:
+        reasons.append("static")
+    n_planner = metrics.get("planner_obstacle_msgs", 0) or 0
+    if n_planner == 0:
+        reasons.append("no-planner-obs")
+    elif metrics.get("planner_obstacle_nonempty_msgs", None) == 0:
+        # Messages arrived (e.g. watchdog-published empty arrays) but the
+        # planner never saw a single obstacle.
+        reasons.append("planner-obs-always-empty")
+    if (method and str(method).startswith("ours_")
+            and (metrics.get("rematch_msgs", 0) or 0) == 0):
+        reasons.append("no-rematch")
+    if metrics.get("goal_success") == 1 and static:
+        reasons.append("goal-without-motion")
+    return (not reasons), reasons
+
+
+def goal_from_messages(goal_msgs):
+    """Last (x, y) from a list of PoseStamped-like messages, or None."""
+    if not goal_msgs:
+        return None
+    p = goal_msgs[-1].pose.position
+    return float(p.x), float(p.y)
 
 
 def compute_clearance(odom_rows, gt_by_id, robot_radius):
@@ -256,6 +323,10 @@ def finite_mean(values):
 def plot_corridor_trajectory(odom_rows, gt_by_id, clearance_rows, goal_metrics, args,
                              output_path, tracker_by_ts=None):
     """Generate BEV trajectory plot of the nav-to-goal corridor run."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
     fig, ax = plt.subplots(figsize=(5, 8))
 
     # ── corridor walls ──
@@ -384,7 +455,13 @@ def write_clearance_csv(path, rows):
             writer.writerow(row)
 
 
+def load_goal(bag, topic):
+    msgs = [m for _, m, _ in bag.read_messages(topics=[topic])]
+    return goal_from_messages(msgs)
+
+
 def main():
+    import rosbag
     parser = argparse.ArgumentParser()
     parser.add_argument("--bag", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -394,11 +471,17 @@ def main():
     parser.add_argument("--planner-topic", default="/sup_exp/planner_obstacles")
     parser.add_argument("--coarse-topic", default="/tracker/dynamic_obstacles")
     parser.add_argument("--rematch-topic", default="/rematch/tracker_details")
+    parser.add_argument("--goal-topic", default="/move_base_simple/goal",
+                        help="Goal read from the bag when --goal-x/--goal-y are not given.")
+    parser.add_argument("--method", default=None,
+                        help="Method name; default inferred from the run dir layout.")
     parser.add_argument("--robot-radius", type=float, default=0.18)
     parser.add_argument("--near-clearance", type=float, default=0.50)
     parser.add_argument("--collision-clearance", type=float, default=0.20)
-    parser.add_argument("--goal-x", type=float, default=0.0)
-    parser.add_argument("--goal-y", type=float, default=8.0)
+    parser.add_argument("--goal-x", type=float, default=None,
+                        help="Explicit goal x (wins over the bag goal; 0.0 if no goal in bag)")
+    parser.add_argument("--goal-y", type=float, default=None,
+                        help="Explicit goal y (wins over the bag goal; 8.0 if no goal in bag)")
     parser.add_argument("--goal-tolerance", type=float, default=0.35)
     parser.add_argument("--collision-until-goal", dest="collision_until_goal",
                         action="store_true", default=True,
@@ -421,6 +504,15 @@ def main():
     gt_by_id = load_gt_obstacles(bag, args.gt_topic)
     odom_rows = load_odom(bag, args.odom_topic)
     status_rows = load_mpc_status(bag, args.status_topic)
+    bag_goal = load_goal(bag, args.goal_topic)
+    if args.goal_x is not None and args.goal_y is not None:
+        goal_source = "cli"
+    elif bag_goal is not None:
+        args.goal_x, args.goal_y = bag_goal
+        goal_source = "bag"
+    else:
+        args.goal_x, args.goal_y = 0.0, 8.0
+        goal_source = "default"
     planner_counts = count_topic_items(bag, args.planner_topic)
     coarse_counts = count_topic_items(bag, args.coarse_topic)
     rematch_counts = count_topic_items(bag, args.rematch_topic)
@@ -499,11 +591,19 @@ def main():
         "rematch_max_count": rematch_counts["max_count"],
     }
     metrics.update(goal_metrics)
+    metrics["goal_source"] = goal_source
+    method = args.method or infer_method(os.path.abspath(args.output_dir))
+    valid, reasons = compute_validity(metrics, method)
+    metrics["method"] = method
+    metrics["valid"] = valid
+    metrics["invalid_reasons"] = reasons
 
     write_clearance_csv(os.path.join(args.output_dir, "clearance_timeseries.csv"),
                         clearance_rows)
+    csv_row = dict(metrics)
+    csv_row["invalid_reasons"] = ";".join(metrics["invalid_reasons"])
     write_single_row_csv(os.path.join(args.output_dir, "planning_metrics.csv"),
-                         metrics)
+                         csv_row)
     with open(os.path.join(args.output_dir, "planning_metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2, sort_keys=True)
 

@@ -39,6 +39,7 @@ namespace MPCPlanner
     public:
         PlannerOutput solveMPC(State &state, RealTimeData &data);
         double getSolution(int k, std::string &&var_name) const;
+        bool isDataReady() const { return _is_data_ready; } // false: the last solveMPC() returned before solving
 
         void onDataReceived(RealTimeData &data, std::string &&data_name);
 

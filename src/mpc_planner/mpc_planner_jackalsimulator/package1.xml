@@ -21,6 +21,7 @@
   <depend>tf2_ros</depend>
 
   <depend>nav_msgs</depend>
+  <depend>mpc_nav</depend>
 
   <exec_depend>pedestrian_simulator</exec_depend>
   <exec_depend>jackal_gazebo</exec_depend>

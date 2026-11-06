@@ -24,6 +24,7 @@ runner:
     - /cmd_vel
     - /mpc/pred_path
     - /mpc/status
+    - /move_base_simple/goal
     - /rematch_statistics_sam
     - /rematch_statistics_clip
     - /rematch_statistics_aggregator
