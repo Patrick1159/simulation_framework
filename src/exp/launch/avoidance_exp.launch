@@ -6,9 +6,8 @@
   Gazebo + dynamic obstacles + selected perception method + MPC navigation.
 
   Composition only — does not modify any module's nodes or launch files.
-  NOTE: $(find my_tb3_description)/launch/my_tb3_gazebo.launch does not
-  declare a `gui` arg, so we cannot pass it through as an <arg>; gui is
-  accepted here for forward-compat but currently has no effect.
+  `gui` is forwarded to my_tb3_gazebo.launch -> empty_world.launch
+  (gui:=false starts gzserver only, no gzclient).
 -->
 <launch>
   <arg name="method" default="ours_full"/>
@@ -29,7 +28,9 @@
   <rosparam command="load" file="$(arg config_file)"/>
 
   <!-- 2. Gazebo + TB3 -->
-  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch">
+    <arg name="gui" value="$(arg gui)"/>
+  </include>
 
   <!-- 3. Dynamic obstacle scene.
        Special case: scene=0 (random_multi). dync_obs.launch's bounds

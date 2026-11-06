@@ -1,6 +1,11 @@
 <launch>
+  <!-- gui:=false runs gzserver only (no gzclient window); default true keeps old behaviour -->
+  <arg name="gui" default="true"/>
+
   <!-- 启 Gazebo 空世界 -->
-  <include file="$(find gazebo_ros)/launch/empty_world.launch"/>
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="gui" value="$(arg gui)"/>
+  </include>
 
   <!-- 用你自己的 xacro 生成 robot_description -->
   <param name="robot_description"

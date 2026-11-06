@@ -32,6 +32,8 @@ class DynamicObstacleField:
 
         # Motion / obstacles
         self.spacing = rospy.get_param("~spacing", 2.0)          # meters along y
+        # y of the first cylinder row; None -> ymin + spacing (legacy behaviour)
+        self.obstacle_y0 = rospy.get_param("~obstacle_y0", None)
         self.speed = rospy.get_param("~speed", 0.5)              # m/s (back-and-forth)
         self.speed_variance = rospy.get_param("~speed_variance", 0.2)  # random variation
         self.radius = rospy.get_param("~radius", 0.3)
@@ -177,7 +179,7 @@ class DynamicObstacleField:
 
     def spawn_obstacles(self):
         # Place cylinders every spacing meters along y, centered in x initially.
-        y = self.ymin + self.spacing
+        y = self.ymin + self.spacing if self.obstacle_y0 is None else float(self.obstacle_y0)
         idx = 0
         while y < self.ymax - 1e-6:
             name = f"{self.obs_prefix}_{idx:02d}"

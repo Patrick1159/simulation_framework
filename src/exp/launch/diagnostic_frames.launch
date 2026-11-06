@@ -30,7 +30,9 @@
   <rosparam command="load" file="$(find sup_exp)/configs/diagnostic.yaml"/>
 
   <!-- 1. Gazebo + TB3 -->
-  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch">
+    <arg name="gui" value="$(arg gui)"/>
+  </include>
 
   <!-- 2. Dynamic obstacles (scene 2 = pair crossing by default) -->
   <group unless="$(eval arg('dynamic_scene') == 0)">

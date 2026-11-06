@@ -34,9 +34,13 @@
     <group if="$(eval arg('scene') == 1)">
         <arg name="xmin" default="-1.5"/>
         <arg name="xmax" default="1.5"/>
-        <arg name="ymin" default="0.0"/>
+        <!-- Bottom wall must sit BEHIND the robot spawn (0,0); ymin=0.0 put the wall
+             on the robot (physics pushed it out of the corridor). -->
+        <arg name="ymin" default="-1.0"/>
         <arg name="ymax" default="10.0"/>
         <arg name="spacing" default="2.0"/>
+        <!-- First cylinder row; 2.0 keeps the original layout (y=2,4,6,8) now that ymin moved. -->
+        <arg name="obstacle_y0" default="2.0"/>
         <arg name="speed" default="0.8"/>
         <arg name="speed_variance" default="0.2"/>
         <arg name="radius" default="0.3"/>
@@ -48,6 +52,7 @@
             <param name="ymin" value="$(arg ymin)"/>
             <param name="ymax" value="$(arg ymax)"/>
             <param name="spacing" value="$(arg spacing)"/>
+            <param name="obstacle_y0" value="$(arg obstacle_y0)"/>
             <param name="speed" value="$(arg speed)"/>
             <param name="speed_variance" value="$(arg speed_variance)"/>
             <param name="radius" value="$(arg radius)"/>

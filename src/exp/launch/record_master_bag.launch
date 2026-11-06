@@ -16,9 +16,8 @@
   <arg name="bag_path" default="/data/rosbags/master_bags/pair_crossing_master.bag"/>
 
   <!-- 1. Gazebo + TB3 (includes static TF world->odom)
-       NOTE: my_tb3_gazebo.launch does not declare a gui arg, so Gazebo GUI
-       follows the empty_world.launch default (gui:=true). Set via env var
-       GAZEBO_GUI:=0 or modify my_tb3_gazebo.launch for headless operation. -->
+       NOTE: my_tb3_gazebo.launch takes a `gui` arg (default true); this launch
+       file keeps the default, so the Gazebo GUI starts. -->
   <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
 
   <!-- 2. Dynamic obstacles (pair_crossing scene) -->

@@ -22,7 +22,9 @@
   <rosparam command="load" file="$(arg config_file)"/>
 
   <!-- 2. Gazebo + TB3 -->
-  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch"/>
+  <include file="$(find my_tb3_description)/launch/my_tb3_gazebo.launch">
+    <arg name="gui" value="$(arg gui)"/>
+  </include>
 
   <!-- 3. Dynamic obstacle scene -->
   <include file="$(find my_tb3_description)/launch/dync_obs.launch">
